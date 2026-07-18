@@ -123,6 +123,16 @@ class EpubReaderActivity final : public Activity {
   // because no KOReader credentials are stored.
   bool launchKOReaderSync();
   void applyOrientation(uint8_t orientation);
+  // Snapshot of the typography values editable in the in-reader Text Settings
+  // panel, captured before launching it so the return path can detect changes.
+  struct TextSettingsSnapshot {
+    uint8_t fontSize;
+    uint8_t lineSpacing;
+    uint8_t screenMargin;
+    uint8_t extraParagraphSpacing;
+  };
+  static TextSettingsSnapshot captureTextSettings();
+  void applyTextSettingsChange(const TextSettingsSnapshot& before);
   void toggleAutoPageTurn(uint8_t selectedPageTurnOption);
   void pageTurn(bool isForwardTurn);
   void loadCachedBookmarks();

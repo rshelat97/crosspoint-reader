@@ -24,6 +24,7 @@
 #include "EpubReaderChapterSelectionActivity.h"
 #include "EpubReaderFootnotesActivity.h"
 #include "EpubReaderPercentSelectionActivity.h"
+#include "EpubReaderTextSettingsActivity.h"
 #include "EpubReaderUtils.h"
 #include "KOReaderCredentialStore.h"
 #include "KOReaderSyncActivity.h"
@@ -772,6 +773,12 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
       addBookmark();
       break;
     }
+    case EpubReaderMenuActivity::MenuAction::TEXT_SETTINGS: {
+      const TextSettingsSnapshot before = captureTextSettings();
+      startActivityForResult(std::make_unique<EpubReaderTextSettingsActivity>(renderer, mappedInput),
+                             [this, before](const ActivityResult&) { applyTextSettingsChange(before); });
+      break;
+    }
   }
 }
 
@@ -848,6 +855,34 @@ void EpubReaderActivity::applyOrientation(const uint8_t orientation) {
     // Reset section to force re-layout in the new orientation.
     section.reset();
   }
+}
+
+EpubReaderActivity::TextSettingsSnapshot EpubReaderActivity::captureTextSettings() {
+  return {SETTINGS.fontSize, SETTINGS.lineSpacing, SETTINGS.screenMargin, SETTINGS.extraParagraphSpacing};
+}
+
+void EpubReaderActivity::applyTextSettingsChange(const TextSettingsSnapshot& before) {
+  // No-op unless the Text Settings panel actually changed a value.
+  if (SETTINGS.fontSize == before.fontSize && SETTINGS.lineSpacing == before.lineSpacing &&
+      SETTINGS.screenMargin == before.screenMargin && SETTINGS.extraParagraphSpacing == before.extraParagraphSpacing) {
+    return;
+  }
+
+  // One SPIFFS write per panel visit, and only when something changed.
+  SETTINGS.saveToFile();
+
+  // Preserve current reading position so we can restore after reflow:
+  // applyDeferredReposition() remaps it once the chapter re-paginates under the
+  // new layout parameters (same flow as applyOrientation).
+  RenderLock lock(*this);
+  if (section) {
+    cachedSpineIndex = currentSpineIndex;
+    cachedChapterTotalPageCount = section->pageCount;
+    nextPageNumber = section->currentPage;
+  }
+
+  // Reset section to force re-layout with the new typography settings.
+  section.reset();
 }
 
 void EpubReaderActivity::toggleAutoPageTurn(const uint8_t selectedPageTurnOption) {
