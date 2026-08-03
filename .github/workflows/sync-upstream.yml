@@ -1,0 +1,40 @@
+name: Sync Fork With Upstream
+
+# Keeps this fork's develop branch current with the upstream project
+# (crosspoint-reader/crosspoint-reader) so feature branches never drift far
+# behind. Runs daily and on demand via the Actions tab (workflow_dispatch).
+#
+# Safety model: --ff-only means the sync either advances develop cleanly or
+# fails the run. It never creates merge commits, never auto-resolves
+# conflicts, and never force-pushes — a diverged develop surfaces as a red
+# run to investigate instead of a silently rewritten branch.
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: develop
+          fetch-depth: 0
+
+      - name: Fast-forward develop from upstream
+        run: |
+          git remote add upstream https://github.com/crosspoint-reader/crosspoint-reader.git
+          git fetch upstream develop
+          BEHIND=$(git rev-list --count HEAD..upstream/develop)
+          if [ "$BEHIND" -eq 0 ]; then
+            echo "Already up to date with upstream develop."
+            exit 0
+          fi
+          echo "develop is $BEHIND commit(s) behind upstream — fast-forwarding."
+          git merge --ff-only upstream/develop
+          git push origin develop
