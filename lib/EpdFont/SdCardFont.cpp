@@ -1326,11 +1326,20 @@ int SdCardFont::buildAdvanceTableRange(Iter begin, Iter end, bool includeSpace, 
   unsigned long startMs = millis();
 
   // +2 reserved slots for space and hyphen injected after the main scan.
+  // Allocated once and reused: this runs per measured paragraph during
+  // indexing, and a 16 KB alloc/free on every call both fragments the heap
+  // and, once the largest free block dips below 16 KB, fails on every page
+  // from then on (upstream #2293). One resident block costs 16 KB only after
+  // an SD font is first laid out, and is shared by all SdCardFont instances
+  // (layout and render run on the single UI task, never concurrently).
   static constexpr uint32_t MAX_UNIQUE_CODEPOINTS = 4096;
-  uint32_t* codepoints = new (std::nothrow) uint32_t[MAX_UNIQUE_CODEPOINTS + 2];
+  static uint32_t* codepoints = nullptr;
   if (!codepoints) {
-    LOG_ERR("SDCF", "buildAdvanceTable: failed to allocate codepoint buffer (%u bytes)", MAX_UNIQUE_CODEPOINTS * 4);
-    return -1;
+    codepoints = new (std::nothrow) uint32_t[MAX_UNIQUE_CODEPOINTS + 2];
+    if (!codepoints) {
+      LOG_ERR("SDCF", "buildAdvanceTable: failed to allocate codepoint buffer (%u bytes)", MAX_UNIQUE_CODEPOINTS * 4);
+      return -1;
+    }
   }
   uint32_t cpCount = 0;
   bool hitCap = false;
@@ -1353,7 +1362,6 @@ int SdCardFont::buildAdvanceTableRange(Iter begin, Iter end, bool includeSpace, 
   }
   std::sort(codepoints, codepoints + cpCount);
   int totalMissed = fetchAdvancesForCodepoints(codepoints, cpCount, styleMask);
-  delete[] codepoints;
   stats_.prewarmTotalMs = millis() - startMs;
   return totalMissed;
 }
