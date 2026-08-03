@@ -6,6 +6,10 @@
 #include <thread>
 #include <vector>
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
+
 #include "Arduino.h"
 #include "HardwareSerial.h"
 #include "SPI.h"
@@ -61,8 +65,18 @@ uint32_t EspClass::getHeapSize() { return 320 * 1024; }
 uint32_t EspClass::getMinFreeHeap() { return 96 * 1024; }
 uint32_t EspClass::getMaxAllocHeap() { return 110 * 1024; }
 [[noreturn]] void EspClass::restart() {
+#ifdef __EMSCRIPTEN__
+  // A firmware reboot maps naturally onto a page reload: persisted /simfs
+  // survives and setup() runs again from the top.
+  fprintf(stderr, "[SIM] ESP.restart() requested — reloading page\n");
+  EM_ASM({ FS.syncfs(false, function(err) { location.reload(); }); });
+  emscripten_cancel_main_loop();
+  EM_ASM({ throw 'unwind'; });
+  __builtin_unreachable();
+#else
   fprintf(stderr, "[SIM] ESP.restart() requested — exiting simulator\n");
   std::exit(0);
+#endif
 }
 EspClass ESP;
 

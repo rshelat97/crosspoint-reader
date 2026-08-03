@@ -178,8 +178,13 @@ if(EMSCRIPTEN)
   target_link_options(crosspoint_sim PRIVATE
       -sALLOW_MEMORY_GROWTH=1
       -sINITIAL_MEMORY=134217728
-      -sEXPORTED_RUNTIME_METHODS=['FS','ccall','cwrap']
+      # HEAPU8 must be exported explicitly on newer emsdks (older ones always
+      # attach it to Module); the frontend reads the RGBA framebuffer from it.
+      -sEXPORTED_RUNTIME_METHODS=['FS','ccall','cwrap','HEAPU8']
       -sEXPORTED_FUNCTIONS=['_main','_sim_button','_sim_touch','_sim_fb','_sim_fb_width','_sim_fb_height','_sim_fb_frame','_sim_refresh_mode','_sim_save_fs','_sim_fs_ready']
       -lidbfs.js
       -sFORCE_FILESYSTEM=1)
+  # Make the build directory directly servable: static frontend + wasm output.
+  add_custom_command(TARGET crosspoint_sim POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_directory "${SIM_DIR}/web" "$<TARGET_FILE_DIR:crosspoint_sim>")
 endif()
