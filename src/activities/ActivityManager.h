@@ -54,6 +54,12 @@ class ActivityManager {
   static void renderTaskTrampoline(void* param);
   [[noreturn]] virtual void renderTaskLoop();
 
+#ifdef CROSSPOINT_SIMULATOR
+  // Simulator (single-threaded host build): the render task never runs, so
+  // render requests execute synchronously here instead of via xTaskNotify.
+  void simRenderNow();
+#endif
+
   // Set by requestUpdateAndWait(); read and cleared by the render task after render completes.
   // Note: only one waiting task is supported at a time
   TaskHandle_t waitingTaskHandle = nullptr;
