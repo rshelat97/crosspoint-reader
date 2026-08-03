@@ -29,11 +29,11 @@ class Atkinson1BitDitherer {
  public:
   // Nothrow error rows: width is content-controlled, and a bare new here
   // abort()s on OOM with -fno-exceptions. Callers must check valid().
-  explicit Atkinson1BitDitherer(int width) : width(width) {
-    errorRow0 = makeUniqueNoThrow<int16_t[]>(width + 4);  // Current row
-    errorRow1 = makeUniqueNoThrow<int16_t[]>(width + 4);  // Next row
-    errorRow2 = makeUniqueNoThrow<int16_t[]>(width + 4);  // Row after next
-  }
+  explicit Atkinson1BitDitherer(int width)
+      : width(width),
+        errorRow0(makeUniqueNoThrow<int16_t[]>(width + 4)),    // Current row
+        errorRow1(makeUniqueNoThrow<int16_t[]>(width + 4)),    // Next row
+        errorRow2(makeUniqueNoThrow<int16_t[]>(width + 4)) {}  // Row after next
 
   bool valid() const { return errorRow0 && errorRow1 && errorRow2; }
 
@@ -108,11 +108,11 @@ class AtkinsonDitherer {
   // nothrow so a wide image under heap pressure degrades to non-dithered
   // rendering instead of abort()ing the whole device (bare new with
   // -fno-exceptions aborts on OOM). Callers must check valid().
-  explicit AtkinsonDitherer(int width) : width(width) {
-    errorRow0 = makeUniqueNoThrow<int16_t[]>(width + 4);  // Current row
-    errorRow1 = makeUniqueNoThrow<int16_t[]>(width + 4);  // Next row
-    errorRow2 = makeUniqueNoThrow<int16_t[]>(width + 4);  // Row after next
-  }
+  explicit AtkinsonDitherer(int width)
+      : width(width),
+        errorRow0(makeUniqueNoThrow<int16_t[]>(width + 4)),    // Current row
+        errorRow1(makeUniqueNoThrow<int16_t[]>(width + 4)),    // Next row
+        errorRow2(makeUniqueNoThrow<int16_t[]>(width + 4)) {}  // Row after next
 
   bool valid() const { return errorRow0 && errorRow1 && errorRow2; }
 
@@ -206,10 +206,11 @@ class FloydSteinbergDitherer {
  public:
   // Nothrow error rows: width is content-controlled, and a bare new here
   // abort()s on OOM with -fno-exceptions. Callers must check valid().
-  explicit FloydSteinbergDitherer(int width) : width(width), rowCount(0) {
-    errorCurRow = makeUniqueNoThrow<int16_t[]>(width + 2);  // +2 for boundary handling
-    errorNextRow = makeUniqueNoThrow<int16_t[]>(width + 2);
-  }
+  explicit FloydSteinbergDitherer(int width)
+      : width(width),
+        rowCount(0),
+        errorCurRow(makeUniqueNoThrow<int16_t[]>(width + 2)),  // +2 for boundary handling
+        errorNextRow(makeUniqueNoThrow<int16_t[]>(width + 2)) {}
 
   bool valid() const { return errorCurRow && errorNextRow; }
 
