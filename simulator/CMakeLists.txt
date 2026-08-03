@@ -173,6 +173,10 @@ target_include_directories(crosspoint_sim PRIVATE
     "${REPO_ROOT}/freeink-sdk/libs/assets/Icons/include")
 
 target_compile_definitions(crosspoint_sim PRIVATE
+    # The real ArduinoJson only accepts our ::String shim through its Arduino
+    # String integration (adapter reads via c_str()/length(), writer appends
+    # via concat()/operator+=). Auto-enabled on device by ARDUINO; opt in here.
+    ARDUINOJSON_ENABLE_ARDUINO_STRING=1
     CROSSPOINT_SIMULATOR=1
     CROSSPOINT_VERSION="simulator"
     ENABLE_SERIAL_LOG

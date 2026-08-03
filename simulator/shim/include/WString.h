@@ -86,6 +86,27 @@ class String {
     return *this;
   }
 
+  // Arduino String append API — ArduinoJson's ::String writer (enabled via
+  // ARDUINOJSON_ENABLE_ARDUINO_STRING) appends through concat()/operator+=.
+  unsigned char concat(const String& rhs) {
+    s_ += rhs.s_;
+    return 1;
+  }
+  unsigned char concat(const char* cstr) {
+    if (!cstr) return 0;
+    s_ += cstr;
+    return 1;
+  }
+  unsigned char concat(const char* cstr, unsigned int len) {
+    if (!cstr) return 0;
+    s_.append(cstr, len);
+    return 1;
+  }
+  unsigned char concat(char c) {
+    s_ += c;
+    return 1;
+  }
+
   friend String operator+(String lhs, const String& rhs) { return String(lhs.s_ + rhs.s_); }
   friend String operator+(String lhs, const char* rhs) { return String(lhs.s_ + rhs); }
   friend String operator+(const char* lhs, const String& rhs) { return String(lhs + rhs.s_); }
