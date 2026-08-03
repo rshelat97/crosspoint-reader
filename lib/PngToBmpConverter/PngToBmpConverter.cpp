@@ -9,6 +9,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <new>
 
 #include "BitmapHelpers.h"
 
@@ -623,18 +624,24 @@ bool PngToBmpConverter::pngFileToBmpStreamInternal(HalFile& pngFile, Print& bmpO
     return false;
   }
 
-  // Create ditherers (same as JpegToBmpConverter)
+  // Create ditherers (same as JpegToBmpConverter). All nothrow: outWidth is
+  // content-controlled and this path runs under image-decode heap pressure —
+  // a bare new here abort()s the device on OOM (-fno-exceptions).
   AtkinsonDitherer* atkinsonDitherer = nullptr;
   FloydSteinbergDitherer* fsDitherer = nullptr;
   Atkinson1BitDitherer* atkinson1BitDitherer = nullptr;
 
+  bool dithererOom = false;
   if (oneBit) {
-    atkinson1BitDitherer = new Atkinson1BitDitherer(outWidth);
+    atkinson1BitDitherer = new (std::nothrow) Atkinson1BitDitherer(outWidth);
+    if (!atkinson1BitDitherer || !atkinson1BitDitherer->valid()) dithererOom = true;
   } else if (!USE_8BIT_OUTPUT) {
     if (USE_ATKINSON) {
-      atkinsonDitherer = new AtkinsonDitherer(outWidth);
+      atkinsonDitherer = new (std::nothrow) AtkinsonDitherer(outWidth);
+      if (!atkinsonDitherer || !atkinsonDitherer->valid()) dithererOom = true;
     } else if (USE_FLOYD_STEINBERG) {
-      fsDitherer = new FloydSteinbergDitherer(outWidth);
+      fsDitherer = new (std::nothrow) FloydSteinbergDitherer(outWidth);
+      if (!fsDitherer || !fsDitherer->valid()) dithererOom = true;
     }
   }
 
@@ -644,10 +651,23 @@ bool PngToBmpConverter::pngFileToBmpStreamInternal(HalFile& pngFile, Print& bmpO
   int currentOutY = 0;
   uint32_t nextOutY_srcStart = 0;
 
-  if (needsScaling) {
-    rowAccum = new uint32_t[outWidth]();
-    rowCount = new uint16_t[outWidth]();
+  if (needsScaling && !dithererOom) {
+    rowAccum = new (std::nothrow) uint32_t[outWidth]();
+    rowCount = new (std::nothrow) uint16_t[outWidth]();
     nextOutY_srcStart = scaleY_fp;
+  }
+
+  if (dithererOom || (needsScaling && (!rowAccum || !rowCount))) {
+    LOG_ERR("PNG", "OOM: dither/scale buffers (width %d)", outWidth);
+    delete[] rowAccum;
+    delete[] rowCount;
+    delete atkinsonDitherer;
+    delete fsDitherer;
+    delete atkinson1BitDitherer;
+    free(rowBuffer);
+    free(ctx.currentRow);
+    free(ctx.previousRow);
+    return false;
   }
 
   // Allocate grayscale row buffer - batch-convert each scanline to avoid

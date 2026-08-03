@@ -8,6 +8,7 @@
 #include <soc/soc_caps.h>
 
 #include <cassert>
+#include <cstdlib>
 
 #include "HalGPIO.h"
 
@@ -108,13 +109,23 @@ uint16_t HalPowerManager::getBatteryPercentage() const {
     return _batteryCachedPercent;
   }
 
-  // smooth the battery %.
-  if (_batteryCachedPercent == 0) {
+  // ADC path: EMA-smooth the raw reading (kept in tenths of a percent), then
+  // latch the displayed value behind a deadband. Without the deadband, ADC
+  // noise walking the EMA across a whole-percent boundary makes the status
+  // bar oscillate (87 -> 86 -> 87 while reading; upstream #1444). The display
+  // only moves once the smoothed estimate has drifted >= 1.2 points from the
+  // shown value — real discharge (or charge) passes through as clean single
+  // steps, jitter never surfaces.
+  if (_batteryDisplayedPercent < 0) {
     _batteryCachedPercent = 10 * battery.readPercentage();
+    _batteryDisplayedPercent = (_batteryCachedPercent + 5) / 10;
   } else {
     _batteryCachedPercent = (_batteryCachedPercent * 9 + battery.readPercentage() * 10) / 10;
+    if (abs(_batteryCachedPercent - _batteryDisplayedPercent * 10) >= 12) {
+      _batteryDisplayedPercent = (_batteryCachedPercent + 5) / 10;
+    }
   }
-  return _batteryCachedPercent / 10;
+  return static_cast<uint16_t>(_batteryDisplayedPercent);
 }
 
 HalPowerManager::Lock::Lock() {

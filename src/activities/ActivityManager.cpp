@@ -154,13 +154,38 @@ void ActivityManager::loop() {
   }
 
   if (requestedUpdate.exchange(false)) {
+#ifdef CROSSPOINT_SIMULATOR
+    simRenderNow();
+#else
     // Using direct notification to signal the render task to update
     // Increment counter so multiple rapid calls won't be lost
     if (renderTaskHandle) {
       xTaskNotify(renderTaskHandle, 1, eIncrement);
     }
+#endif
   }
 }
+
+#ifdef CROSSPOINT_SIMULATOR
+void ActivityManager::simRenderNow() {
+  // A render that requests another update (e.g. HomeActivity's two-pass cover
+  // paint) must defer it to the next loop pass, not recurse.
+  static bool rendering = false;
+  if (rendering) {
+    requestedUpdate = true;
+    return;
+  }
+  rendering = true;
+  {
+    RenderLock lock;
+    if (currentActivity) {
+      HalPowerManager::Lock powerLock;
+      currentActivity->render(std::move(lock));
+    }
+  }
+  rendering = false;
+}
+#endif
 
 void ActivityManager::exitActivity(const RenderLock& lock) {
   // Note: lock must be held by the caller
@@ -282,9 +307,13 @@ ScreenshotInfo ActivityManager::getScreenshotInfo() const {
 
 void ActivityManager::requestUpdate(bool immediate) {
   if (immediate) {
+#ifdef CROSSPOINT_SIMULATOR
+    simRenderNow();
+#else
     if (renderTaskHandle) {
       xTaskNotify(renderTaskHandle, 1, eIncrement);
     }
+#endif
   } else {
     // Deferring the update until current loop is finished
     // This is to avoid multiple updates being requested in the same loop
@@ -317,8 +346,12 @@ void ActivityManager::requestUpdateAndWait() {
   // Cannot call while holding RenderLock or it will cause a deadlock
   assert(!holdingRenderLock && "Cannot call requestUpdateAndWait() while holding RenderLock");
 
+#ifdef CROSSPOINT_SIMULATOR
+  simRenderNow();
+#else
   xTaskNotify(renderTaskHandle, 1, eIncrement);
   ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+#endif
 }
 
 // RenderLock

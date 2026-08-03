@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CrossPoint Simulator</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect x='2' y='1' width='12' height='14' rx='2' fill='%23e8e4da'/%3E%3Crect x='4' y='3' width='8' height='9' fill='%23fff' stroke='%23555' stroke-width='.5'/%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg: #1c1e22;
+    --panel: #26292f;
+    --text: #d8dade;
+    --dim: #8b8f98;
+    --accent: #6aa1ff;
+    /* X4 body: light warm-gray plastic, measured off device photos */
+    --body-hi: #eef0f1;
+    --body-lo: #d9dcde;
+    --body-edge: #b9bdc1;
+    --key-hi: #f3f4f5;
+    --key-lo: #d5d8da;
+    --key-edge: #aeb2b6;
+    /* proportions: device W:H = 1:1.64, screen = 82.6% of height */
+    --dev-h: min(80vh, 840px);
+    --dev-w: calc(var(--dev-h) * 0.612);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+    display: flex;
+    flex-direction: column;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 16px;
+    background: var(--panel);
+    border-bottom: 1px solid #000;
+    flex-wrap: wrap;
+  }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  header .sub { color: var(--dim); font-size: 12px; }
+  header .spacer { flex: 1; }
+  .toolbar button {
+    background: #33363d;
+    color: var(--text);
+    border: 1px solid #43464e;
+    border-radius: 6px;
+    padding: 6px 12px;
+    margin-left: 6px;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  .toolbar button:hover { background: #3d4048; }
+  .toolbar button:disabled { opacity: .45; cursor: default; }
+  main {
+    flex: 1;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    gap: 30px;
+    padding: 22px;
+    overflow: auto;
+    flex-wrap: wrap;
+  }
+
+  /* --- Xteink X4 device mock ------------------------------------------------ */
+  #device-outer {
+    width: var(--dev-w);
+    height: var(--dev-h);
+    display: grid;
+    place-items: center;
+    transition: width .25s, height .25s;
+  }
+  body.dev-rot-90 #device-outer, body.dev-rot-270 #device-outer {
+    width: var(--dev-h);
+    height: var(--dev-w);
+  }
+  #device {
+    position: relative;
+    width: var(--dev-w);
+    height: var(--dev-h);
+    background: linear-gradient(160deg, var(--body-hi) 0%, var(--body-lo) 100%);
+    border: 1px solid var(--body-edge);
+    border-radius: calc(var(--dev-w) * 0.055);
+    box-shadow: 0 14px 34px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.7);
+    user-select: none;
+    -webkit-user-select: none;
+    transition: transform .25s;
+  }
+  body.dev-rot-90 #device { transform: rotate(90deg); }
+  body.dev-rot-180 #device { transform: rotate(180deg); }
+  body.dev-rot-270 #device { transform: rotate(270deg); }
+
+  #screen-wrap {
+    position: absolute;
+    top: 5.3%;
+    left: 50%;
+    transform: translateX(-50%);
+    height: 82.6%;
+    aspect-ratio: 480 / 800;
+    background: #fff;
+    border: 2px solid #56534d;
+    border-radius: 2px;
+    box-shadow: inset 0 0 6px rgba(0,0,0,.28);
+    overflow: hidden;
+    touch-action: none;
+  }
+  #screen { display: block; width: 100%; height: 100%; image-rendering: pixelated; }
+  #flash-overlay {
+    position: absolute; inset: 0;
+    background: #000; opacity: 0; pointer-events: none;
+  }
+  #flash-overlay.flash { animation: einkflash .28s ease-out; }
+  @keyframes einkflash {
+    0% { opacity: 0; } 25% { opacity: 1; } 100% { opacity: 0; }
+  }
+  .overlay {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 8px; text-align: center;
+    background: rgba(20,21,24,.92);
+    color: var(--text); padding: 20px;
+  }
+  .overlay .big { font-size: 30px; }
+  .overlay[hidden] { display: none; }
+  #sleep-overlay { cursor: pointer; }
+  #drop-hint {
+    background: rgba(38,64,110,.9);
+    border: 2px dashed var(--accent);
+    pointer-events: none;
+  }
+
+  /* Edge keys: power + page rocker on the right side, like the real X4. */
+  .edge-key {
+    position: absolute;
+    right: calc(var(--dev-w) * -0.016);
+    width: calc(var(--dev-w) * 0.035);
+    background: linear-gradient(90deg, var(--key-hi), var(--key-lo));
+    border: 1px solid var(--key-edge);
+    border-radius: 0 4px 4px 0;
+    cursor: pointer;
+    padding: 0;
+  }
+  .edge-key:active, .edge-key.held {
+    background: var(--key-lo);
+    right: calc(var(--dev-w) * -0.008);
+  }
+  #btn-power  { top: 6%;  height: 5%; }
+  #btn-pgup   { top: 20%; height: 11%; }
+  #btn-pgdown { top: 40%; height: 11%; }
+
+  /* Front paddles: two wide bars in the chin; each half is one button.
+     On-device order left to right: Back, Confirm, Left, Right. */
+  .paddle {
+    position: absolute;
+    bottom: 3.2%;
+    height: 3.4%;
+    width: 32%;
+    display: flex;
+    background: linear-gradient(180deg, var(--key-hi), var(--key-lo));
+    border: 1px solid var(--key-edge);
+    border-radius: 999px;
+    overflow: hidden;
+    box-shadow: 0 1px 0 rgba(255,255,255,.8) inset;
+  }
+  #paddle-left { left: 14.5%; }
+  #paddle-right { right: 14.5%; }
+  .paddle button {
+    flex: 1;
+    background: transparent;
+    border: 0;
+    cursor: pointer;
+    color: #8d9094;
+    font-size: calc(var(--dev-h) * 0.016);
+    padding: 0;
+  }
+  .paddle button:first-child { border-right: 1px solid rgba(0,0,0,.12); }
+  .paddle button:active, .paddle button.held { background: rgba(0,0,0,.10); }
+
+  /* --- side panel ------------------------------------------------------------ */
+  aside {
+    width: 330px;
+    max-width: 95vw;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .card {
+    background: var(--panel);
+    border: 1px solid #34373e;
+    border-radius: 10px;
+    padding: 12px 14px;
+  }
+  .card h2 { font-size: 13px; margin: 0 0 8px; color: var(--dim); text-transform: uppercase; letter-spacing: .06em; }
+  #status dl { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; margin: 0; }
+  #status dt { color: var(--dim); }
+  #status dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+  table.keys { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.keys td { padding: 3px 0; }
+  table.keys td:first-child { color: var(--dim); }
+  kbd {
+    background: #33363d; border: 1px solid #4a4d55; border-bottom-width: 2px;
+    border-radius: 4px; padding: 1px 6px; font-size: 12px;
+    font-family: ui-monospace, monospace;
+  }
+  #log {
+    max-height: 190px; overflow: auto;
+    background: #101114; border-radius: 6px; padding: 8px;
+    font: 11px/1.5 ui-monospace, monospace;
+    white-space: pre-wrap; word-break: break-all;
+    color: #9aa0aa; margin: 0;
+  }
+  #log .err { color: #e08b8b; }
+  #toast {
+    position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+    background: #2f4b32; color: #d8efd8; border: 1px solid #4d7a52;
+    border-radius: 8px; padding: 10px 18px; font-size: 13px;
+    opacity: 0; transition: opacity .25s; pointer-events: none; max-width: 90vw;
+  }
+  #toast.show { opacity: 1; }
+  #toast.warn { background: #4b3a2f; color: #efd8c8; border-color: #7a5f4d; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>CrossPoint Simulator</h1>
+  <span class="sub">real firmware, simulated hardware &middot; Xteink X4 (800&times;480 e-ink)</span>
+  <span class="spacer"></span>
+  <span class="toolbar">
+    <button id="tb-webui" title="Open the device's web interface (start File Transfer on the device first)" disabled>Device web UI &#8599;</button>
+    <button id="tb-addbook" title="Copy an EPUB/TXT/XTC file into the simulated SD card">Add book&hellip;</button>
+    <button id="tb-screenshot" title="Download the current screen as PNG">Screenshot</button>
+    <button id="tb-rotate" title="Turn the device sideways">Rotate device</button>
+    <button id="tb-reset" title="Wipe the simulated SD card and reboot">Reset device</button>
+  </span>
+  <input id="file-input" type="file" accept=".epub,.txt,.xtc" multiple hidden>
+</header>
+
+<main>
+  <div id="device-outer">
+    <div id="device">
+      <div id="screen-wrap">
+        <canvas id="screen" width="480" height="800"></canvas>
+        <div id="flash-overlay"></div>
+        <div class="overlay" id="boot-overlay">
+          <div class="big">&#9203;</div>
+          <div>Booting firmware&hellip;</div>
+          <div id="boot-detail" style="color:var(--dim);font-size:12px">loading wasm</div>
+        </div>
+        <div class="overlay" id="sleep-overlay" hidden>
+          <div class="big">&#128164;</div>
+          <div>The device is asleep.</div>
+          <div style="color:var(--dim);font-size:12px">Click to wake (reboots the firmware, storage is kept)</div>
+        </div>
+        <div class="overlay" id="drop-hint" hidden>
+          <div class="big">&#128218;</div>
+          <div>Drop to add to the library</div>
+        </div>
+      </div>
+      <button class="edge-key" id="btn-power" data-btn="6" title="Power (hold to sleep)"></button>
+      <button class="edge-key" id="btn-pgup" data-btn="4" title="Side button: page back"></button>
+      <button class="edge-key" id="btn-pgdown" data-btn="5" title="Side button: page forward"></button>
+      <div class="paddle" id="paddle-left">
+        <button data-btn="0" title="Back">&#8617;</button>
+        <button data-btn="1" title="Confirm">&#10003;</button>
+      </div>
+      <div class="paddle" id="paddle-right">
+        <button data-btn="2" title="Left">&#8592;</button>
+        <button data-btn="3" title="Right">&#8594;</button>
+      </div>
+    </div>
+  </div>
+
+  <aside>
+    <div class="card" id="status">
+      <h2>Status</h2>
+      <dl>
+        <dt>Firmware</dt><dd id="st-fw">loading</dd>
+        <dt>Frames presented</dt><dd id="st-frames">0</dd>
+        <dt>Last refresh</dt><dd id="st-refresh">&ndash;</dd>
+        <dt>Web server</dt><dd id="st-server">stopped</dd>
+        <dt>Storage</dt><dd>IndexedDB (persistent)</dd>
+      </dl>
+    </div>
+    <div class="card">
+      <h2>Controls</h2>
+      <table class="keys">
+        <tr><td>Tap / swipe</td><td>click or drag on the screen</td></tr>
+        <tr><td>Page back / forward</td><td><kbd>PgUp</kbd> <kbd>&uarr;</kbd> / <kbd>PgDn</kbd> <kbd>&darr;</kbd></td></tr>
+        <tr><td>Left / Right</td><td><kbd>&larr;</kbd> / <kbd>&rarr;</kbd></td></tr>
+        <tr><td>Confirm</td><td><kbd>Enter</kbd></td></tr>
+        <tr><td>Back</td><td><kbd>Esc</kbd> or <kbd>Backspace</kbd></td></tr>
+        <tr><td>Power</td><td><kbd>P</kbd> (hold to sleep)</td></tr>
+        <tr><td>Add books</td><td>drag &amp; drop onto the screen</td></tr>
+        <tr><td>File Transfer</td><td>Home &rarr; File Transfer &rarr; any mode, then &ldquo;Device web UI&rdquo; above</td></tr>
+      </table>
+    </div>
+    <div class="card">
+      <h2>Serial log</h2>
+      <pre id="log"></pre>
+    </div>
+  </aside>
+</main>
+
+<div id="toast"></div>
+<script src="app.js"></script>
+</body>
+</html>

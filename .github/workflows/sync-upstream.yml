@@ -1,0 +1,45 @@
+name: Sync Fork With Upstream
+
+# Keeps this fork's develop branch current with the upstream project
+# (crosspoint-reader/crosspoint-reader). Runs daily and on demand via the
+# Actions tab (workflow_dispatch).
+#
+# Safety model: this fork's develop carries its own commits (simulator, X4
+# fixes), so the sync MERGES upstream instead of fast-forwarding. A clean
+# merge is committed and pushed; a conflicting merge fails the run loudly for
+# a human to resolve. It never auto-resolves conflicts and never
+# force-pushes — a conflict surfaces as a red run, not a rewritten branch.
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: develop
+          fetch-depth: 0
+
+      - name: Merge upstream develop
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream https://github.com/crosspoint-reader/crosspoint-reader.git
+          git fetch upstream develop
+          BEHIND=$(git rev-list --count HEAD..upstream/develop)
+          if [ "$BEHIND" -eq 0 ]; then
+            echo "Already up to date with upstream develop."
+            exit 0
+          fi
+          echo "develop is $BEHIND commit(s) behind upstream — merging."
+          # Fails the run on conflicts (no auto-resolution, no force-push);
+          # resolve manually with a local merge and push.
+          git merge --no-edit upstream/develop
+          git push origin develop

@@ -1,0 +1,131 @@
+name: Simulator
+
+# Builds the web simulator (real firmware compiled to WASM against the
+# simulator HAL) and deploys it to GitHub Pages. Also runs a native headless
+# smoke test that boots the firmware to the Home screen.
+#
+# One-time setup for the Pages deploy: repository Settings -> Pages ->
+# Build and deployment -> Source: "GitHub Actions". To deploy from branches
+# other than the default one, also allow them under Settings -> Environments
+# -> github-pages -> Deployment branches.
+
+on:
+  push:
+    branches: [develop, master, 'claude/**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: simulator-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build
+
+      - name: Configure
+        run: cmake -S simulator -B build/sim-native -G Ninja
+
+      - name: Build
+        run: cmake --build build/sim-native
+
+      - name: Boot firmware headless (300 frames, dump Home screen)
+        run: |
+          set -euo pipefail
+          mkdir -p sim-smoke-fs
+          CROSSPOINT_SIM_FS=sim-smoke-fs ./build/sim-native/crosspoint_sim --frames 300 --dump home.ppm
+
+      - name: Reader smoke with images (real JPEG/PNG decoders + dithering)
+        run: |
+          set -euo pipefail
+          mkdir -p sim-smoke-fs/books
+          cp test/epubs/test_jpeg_images.epub test/epubs/test_png_images.epub sim-smoke-fs/books/
+          # Home -> Browse Files -> /books -> open first book, then page through
+          # it (image pages exercise decode + dither + grayscale render).
+          CROSSPOINT_SIM_FS=sim-smoke-fs ./build/sim-native/crosspoint_sim --frames 1200 --dump reader.ppm \
+            --key 1:60:64 --key 1:150:154 --key 1:250:254 \
+            --key 5:500:504 --key 5:650:654 --key 5:800:804 --key 5:950:954
+
+      - name: File Transfer smoke (hotspot mode + real web server endpoints)
+        run: |
+          set -euo pipefail
+          # Fresh filesystem: the reader smoke above leaves an open book, and a
+          # boot with reading state auto-resumes into the reader, which would
+          # swallow the key script meant for the Home menu.
+          mkdir -p sim-ft-fs
+          CROSSPOINT_SIM_FS=sim-ft-fs ./build/sim-native/crosspoint_sim --frames 800 \
+            --key 5:60:64 --key 5:120:124 --key 1:180:184 \
+            --key 5:240:244 --key 5:300:304 --key 1:360:364 \
+            --http "GET /api/status" --http "GET /api/files?path=/" --http "GET /"
+
+      - name: Upload Home screen frame
+        uses: actions/upload-artifact@v6
+        with:
+          name: sim-home-frame
+          path: home.ppm
+          if-no-files-found: error
+
+  wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build
+
+      - name: Set up Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 3.1.64
+          actions-cache-folder: emsdk-cache
+
+      - name: Configure
+        run: emcmake cmake -S simulator -B build/sim-wasm -G Ninja
+
+      - name: Build
+        run: cmake --build build/sim-wasm
+
+      - name: Assemble site
+        run: |
+          set -euo pipefail
+          mkdir -p site
+          cp simulator/web/* site/
+          cp build/sim-wasm/crosspoint_sim.js build/sim-wasm/crosspoint_sim.wasm site/
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+
+  deploy:
+    # Deploy on branch pushes (not PRs from forks). Requires Pages to be
+    # enabled with Source = "GitHub Actions" (see header comment).
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    needs: wasm
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
