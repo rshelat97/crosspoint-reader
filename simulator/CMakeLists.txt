@@ -98,6 +98,21 @@ if(SIM_FETCH_JPEGDEC)
   endif()
 endif()
 
+# --- generated i18n sources ---------------------------------------------------
+# I18nKeys.h / I18nStrings.{h,cpp} are gitignored and generated from the YAML
+# translation files (the device build does this in a PlatformIO pre: script).
+# Run the generator at configure time so a fresh checkout builds, and so the
+# glob below picks up I18nStrings.cpp. The script has no dependencies beyond
+# the Python standard library. Re-run cmake after editing translation YAMLs.
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+execute_process(
+  COMMAND "${Python3_EXECUTABLE}" "${REPO_ROOT}/scripts/gen_i18n.py"
+          "${REPO_ROOT}/lib/I18n/translations" "${REPO_ROOT}/lib/I18n/"
+  RESULT_VARIABLE I18N_GEN_RESULT)
+if(NOT I18N_GEN_RESULT EQUAL 0)
+  message(FATAL_ERROR "gen_i18n.py failed (exit ${I18N_GEN_RESULT})")
+endif()
+
 # --- firmware sources ---------------------------------------------------------
 file(GLOB_RECURSE SRC_SOURCES "${REPO_ROOT}/src/*.cpp")
 list(FILTER SRC_SOURCES EXCLUDE REGEX "/src/network/")
