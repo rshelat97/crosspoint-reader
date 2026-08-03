@@ -36,6 +36,20 @@ long random(long howbig);
 #define PROGMEM
 #endif
 
+// AVR progmem compatibility — flash and RAM are one address space on the host
+// (as on ESP32), so these collapse to plain memory access. The bitbank2
+// decoders (JPEGDEC/PNGdec) use them unconditionally on Arduino targets.
+#ifndef memcpy_P
+#define memcpy_P memcpy
+#define memcmp_P memcmp
+#define strcpy_P strcpy
+#define strlen_P strlen
+#define pgm_read_byte(addr) (*(const uint8_t*)(addr))
+#define pgm_read_word(addr) (*(const uint16_t*)(addr))
+#define pgm_read_dword(addr) (*(const uint32_t*)(addr))
+#define PSTR(s) (s)
+#endif
+
 // --- GPIO stubs (HAL sim implementations never touch real pins) --------------
 #ifndef INPUT
 #define INPUT 0x01
