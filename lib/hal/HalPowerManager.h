@@ -17,7 +17,8 @@ class HalPowerManager {
   int normalFreq = 0;  // MHz
   bool isLowPower = false;
 
-  mutable int _batteryCachedPercent = 0;         // Last read battery percentage (0-100)
+  mutable int _batteryCachedPercent = 0;         // Gauge: last % (0-100). ADC: EMA in tenths (0-1000)
+  mutable int _batteryDisplayedPercent = -1;     // ADC: last % shown (deadband-latched), -1 = unseeded
   mutable unsigned long _batteryLastPollMs = 0;  // Timestamp of last battery read in milliseconds
 
   enum LockMode { None, NormalSpeed };
