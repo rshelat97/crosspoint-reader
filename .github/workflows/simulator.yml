@@ -47,6 +47,14 @@ jobs:
           mkdir -p sim-smoke-fs
           CROSSPOINT_SIM_FS=sim-smoke-fs ./build/sim-native/crosspoint_sim --frames 300 --dump home.ppm
 
+      - name: File Transfer smoke (hotspot mode + real web server endpoints)
+        run: |
+          set -euo pipefail
+          CROSSPOINT_SIM_FS=sim-smoke-fs ./build/sim-native/crosspoint_sim --frames 800 \
+            --key 5:60:64 --key 5:120:124 --key 1:180:184 \
+            --key 5:240:244 --key 5:300:304 --key 1:360:364 \
+            --http "GET /api/status" --http "GET /api/files?path=/" --http "GET /"
+
       - name: Upload Home screen frame
         uses: actions/upload-artifact@v6
         with:

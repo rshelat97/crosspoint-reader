@@ -5,6 +5,7 @@
 // function named String, so a macro would break the build).
 #include <cctype>
 #include <cstdint>  // Arduino's WString.h chain provides fixed-width ints
+#include <cstdlib>
 #include <cstring>
 #include <string>
 
@@ -39,13 +40,26 @@ class String {
     return String(s_.substr(from, to - from));
   }
 
-  int indexOf(char c) const {
-    const auto p = s_.find(c);
+  int indexOf(char c, int fromIndex = 0) const {
+    if (fromIndex < 0) fromIndex = 0;
+    const auto p = s_.find(c, static_cast<size_t>(fromIndex));
     return p == std::string::npos ? -1 : static_cast<int>(p);
   }
-  int indexOf(const char* sub) const {
-    const auto p = s_.find(sub);
+  int indexOf(const char* sub, int fromIndex = 0) const {
+    if (fromIndex < 0) fromIndex = 0;
+    const auto p = s_.find(sub, static_cast<size_t>(fromIndex));
     return p == std::string::npos ? -1 : static_cast<int>(p);
+  }
+  long toInt() const { return strtol(s_.c_str(), nullptr, 10); }
+  double toDouble() const { return strtod(s_.c_str(), nullptr); }
+  bool equals(const String& rhs) const { return s_ == rhs.s_; }
+  bool equals(const char* rhs) const { return rhs != nullptr && s_ == rhs; }
+  bool equalsIgnoreCase(const String& rhs) const {
+    if (s_.size() != rhs.s_.size()) return false;
+    for (size_t i = 0; i < s_.size(); i++) {
+      if (tolower(static_cast<unsigned char>(s_[i])) != tolower(static_cast<unsigned char>(rhs.s_[i]))) return false;
+    }
+    return true;
   }
   int lastIndexOf(char c) const {
     const auto p = s_.rfind(c);
@@ -84,6 +98,20 @@ class String {
   String& operator+=(char c) {
     s_ += c;
     return *this;
+  }
+
+  void replace(const String& from, const String& to) {
+    if (from.s_.empty()) return;
+    size_t pos = 0;
+    while ((pos = s_.find(from.s_, pos)) != std::string::npos) {
+      s_.replace(pos, from.s_.size(), to.s_);
+      pos += to.s_.size();
+    }
+  }
+  void replace(char from, char to) {
+    for (auto& c : s_) {
+      if (c == from) c = to;
+    }
   }
 
   // Arduino String append API — ArduinoJson's ::String writer (enabled via

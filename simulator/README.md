@@ -19,7 +19,27 @@ In the app: drag an `.epub` onto the screen to add it to the library, click
 the screen to tap, drag for swipes, use the on-screen buttons or the keyboard
 (arrows/PgUp/PgDn navigate, Enter confirms, Esc goes back, hold `P` to sleep).
 The simulated SD card lives in browser IndexedDB, so books, settings and
-reading progress survive reloads.
+reading progress survive reloads. The device mock mirrors the physical X4:
+page keys and power on the right edge, and the two front paddles (Back/Confirm
+and Left/Right) below the screen.
+
+### File Transfer (the real device web UI)
+
+File Transfer works end to end: on the simulated device choose **Home → File
+Transfer → any mode** (the Wi-Fi radio is faked — scans find a couple of
+pretend networks and joining always succeeds). That starts the REAL
+`CrossPointWebServer` inside the wasm module. Click **"Device web UI"** in the
+toolbar (or browse to `device/` under the simulator URL) and you get the
+actual firmware-served web interface — Home/status, the File Manager (upload,
+download, rename, move, delete), Settings and Fonts pages — operating on the
+simulated SD card.
+
+Under the hood a service worker forwards `device/...` fetches (and the pages'
+server-absolute `/api/...` calls) into the firmware's request handlers — no
+sockets involved, so it works on plain static hosting. WebSocket upload can't
+run in a browser page; the Files page automatically falls back to its HTTP
+upload path. WebDAV handlers are compiled in but external WebDAV clients
+can't reach the simulator.
 
 ## Build natively (Linux/macOS)
 
@@ -98,8 +118,10 @@ Key design points:
 
 ## What is (deliberately) not simulated
 
-- Wi-Fi: the five network activities show a notice and back out; network
-  clients return error codes. Everything else (Home, browser, reader, menus,
-  Text Settings, dictionary, settings) is fully functional.
+- Real network access: the Wi-Fi radio is faked (fake scan results, instant
+  joins), which is enough for the REAL Wi-Fi selection and File Transfer
+  activities plus the web server to run. True network clients — OPDS
+  browsing, Calibre wireless, KOReader sync, OTA download — show a notice and
+  back out or return error codes.
 - OTA flashing, battery drain (fixed 87%), USB, and the tilt sensor.
 - E-ink refresh artifacts: a FULL refresh is visualised with a brief flash.

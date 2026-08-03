@@ -94,6 +94,13 @@ int main() {
 
 #else  // native ---------------------------------------------------------------
 
+extern "C" {
+int sim_http_request(const char* method, const char* uriWithQuery, const uint8_t* body, int bodyLen,
+                     const char* headerBlock);
+const uint8_t* sim_http_response_body();
+int sim_http_response_body_len();
+}
+
 namespace {
 
 struct KeyScript {
@@ -108,6 +115,7 @@ int main(int argc, char** argv) {
   unsigned long frames = 0;  // 0 = run forever
   const char* dumpPath = nullptr;
   std::vector<KeyScript> script;
+  std::vector<std::string> httpRequests;
 
   for (int i = 1; i < argc; i++) {
     if (strcmp(argv[i], "--frames") == 0 && i + 1 < argc) {
@@ -118,8 +126,13 @@ int main(int argc, char** argv) {
       // --key <btnIndex>:<downFrame>:<upFrame>
       KeyScript k{};
       if (sscanf(argv[++i], "%d:%lu:%lu", &k.btn, &k.downFrame, &k.upFrame) == 3) script.push_back(k);
+    } else if (strcmp(argv[i], "--http") == 0 && i + 1 < argc) {
+      // --http "GET /api/status" — sent to the firmware web server after the
+      // frame loop (requires the script to have started File Transfer mode).
+      httpRequests.emplace_back(argv[++i]);
     } else {
-      fprintf(stderr, "usage: %s [--frames N] [--dump out.ppm] [--key btn:down:up]...\n", argv[0]);
+      fprintf(stderr, "usage: %s [--frames N] [--dump out.ppm] [--key btn:down:up]... [--http \"GET /path\"]...\n",
+              argv[0]);
       return 2;
     }
   }
@@ -139,7 +152,16 @@ int main(int argc, char** argv) {
     }
     printf("[SIM] wrote %s (frame %u)\n", dumpPath, simdisp::frameCounter());
   }
-  return 0;
+  int failures = 0;
+  for (const auto& req : httpRequests) {
+    const size_t space = req.find(' ');
+    const std::string method = space == std::string::npos ? "GET" : req.substr(0, space);
+    const std::string path = space == std::string::npos ? req : req.substr(space + 1);
+    const int code = sim_http_request(method.c_str(), path.c_str(), nullptr, 0, "");
+    printf("[SIM] HTTP %s %s -> %d (%d bytes)\n", method.c_str(), path.c_str(), code, sim_http_response_body_len());
+    if (code < 200 || code >= 400) failures++;
+  }
+  return failures == 0 ? 0 : 1;
 }
 
 #endif

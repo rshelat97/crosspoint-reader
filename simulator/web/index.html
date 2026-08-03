@@ -11,9 +11,17 @@
     --panel: #26292f;
     --text: #d8dade;
     --dim: #8b8f98;
-    --bezel: #e8e4da;
-    --bezel-edge: #c9c4b8;
     --accent: #6aa1ff;
+    /* X4 body: light warm-gray plastic, measured off device photos */
+    --body-hi: #eef0f1;
+    --body-lo: #d9dcde;
+    --body-edge: #b9bdc1;
+    --key-hi: #f3f4f5;
+    --key-lo: #d5d8da;
+    --key-edge: #aeb2b6;
+    /* proportions: device W:H = 1:1.64, screen = 82.6% of height */
+    --dev-h: min(80vh, 840px);
+    --dev-w: calc(var(--dev-h) * 0.612);
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; }
@@ -47,61 +55,61 @@
     font-size: 13px;
   }
   .toolbar button:hover { background: #3d4048; }
+  .toolbar button:disabled { opacity: .45; cursor: default; }
   main {
     flex: 1;
     display: flex;
     justify-content: center;
     align-items: flex-start;
-    gap: 28px;
-    padding: 20px;
+    gap: 30px;
+    padding: 22px;
     overflow: auto;
     flex-wrap: wrap;
   }
 
-  /* --- device mock ---------------------------------------------------------- */
+  /* --- Xteink X4 device mock ------------------------------------------------ */
+  #device-outer {
+    width: var(--dev-w);
+    height: var(--dev-h);
+    display: grid;
+    place-items: center;
+    transition: width .25s, height .25s;
+  }
+  body.dev-rot-90 #device-outer, body.dev-rot-270 #device-outer {
+    width: var(--dev-h);
+    height: var(--dev-w);
+  }
   #device {
-    display: flex;
-    align-items: stretch;
-    gap: 0;
+    position: relative;
+    width: var(--dev-w);
+    height: var(--dev-h);
+    background: linear-gradient(160deg, var(--body-hi) 0%, var(--body-lo) 100%);
+    border: 1px solid var(--body-edge);
+    border-radius: calc(var(--dev-w) * 0.055);
+    box-shadow: 0 14px 34px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.7);
     user-select: none;
     -webkit-user-select: none;
+    transition: transform .25s;
   }
-  #side-buttons {
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    gap: 14px;
-    padding-right: 4px;
-  }
-  #side-buttons .dev-btn {
-    writing-mode: vertical-rl;
-    min-height: 84px;
-    width: 26px;
-    border-radius: 8px 0 0 8px;
-  }
-  #body-shell {
-    background: linear-gradient(145deg, var(--bezel), var(--bezel-edge));
-    border-radius: 18px;
-    padding: 14px 14px 10px;
-    box-shadow: 0 12px 30px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.6);
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-  #power-row { display: flex; justify-content: flex-end; }
+  body.dev-rot-90 #device { transform: rotate(90deg); }
+  body.dev-rot-180 #device { transform: rotate(180deg); }
+  body.dev-rot-270 #device { transform: rotate(270deg); }
+
   #screen-wrap {
-    position: relative;
+    position: absolute;
+    top: 5.3%;
+    left: 50%;
+    transform: translateX(-50%);
+    height: 82.6%;
+    aspect-ratio: 480 / 800;
     background: #fff;
-    border: 2px solid #6a675f;
-    border-radius: 3px;
+    border: 2px solid #56534d;
+    border-radius: 2px;
+    box-shadow: inset 0 0 6px rgba(0,0,0,.28);
     overflow: hidden;
-    width: min(432px, calc(100vw - 140px), calc((100vh - 230px) * 0.6));
     touch-action: none;
   }
-  body.landscape-view #screen-wrap {
-    width: min(760px, calc(100vw - 140px));
-  }
-  #screen { display: block; width: 100%; height: auto; image-rendering: pixelated; }
+  #screen { display: block; width: 100%; height: 100%; image-rendering: pixelated; }
   #flash-overlay {
     position: absolute; inset: 0;
     background: #000; opacity: 0; pointer-events: none;
@@ -126,30 +134,53 @@
     border: 2px dashed var(--accent);
     pointer-events: none;
   }
-  #front-buttons {
-    display: flex;
-    justify-content: center;
-    gap: 16px;
-    padding: 2px 0 4px;
-  }
-  .dev-btn {
-    background: linear-gradient(180deg, #f4f1e9, #d6d1c4);
-    border: 1px solid #a9a496;
-    border-radius: 10px;
-    color: #3d3b34;
-    font-size: 15px;
-    min-width: 52px;
-    padding: 9px 10px;
+
+  /* Edge keys: power + page rocker on the right side, like the real X4. */
+  .edge-key {
+    position: absolute;
+    right: calc(var(--dev-w) * -0.016);
+    width: calc(var(--dev-w) * 0.035);
+    background: linear-gradient(90deg, var(--key-hi), var(--key-lo));
+    border: 1px solid var(--key-edge);
+    border-radius: 0 4px 4px 0;
     cursor: pointer;
-    box-shadow: 0 2px 0 #b3ae9f;
-    touch-action: none;
+    padding: 0;
   }
-  .dev-btn:active, .dev-btn.held {
-    transform: translateY(2px);
-    box-shadow: 0 0 0 #b3ae9f;
-    background: #cdc8bb;
+  .edge-key:active, .edge-key.held {
+    background: var(--key-lo);
+    right: calc(var(--dev-w) * -0.008);
   }
-  #btn-power { min-width: 40px; padding: 4px 12px; font-size: 12px; border-radius: 6px; }
+  #btn-power  { top: 6%;  height: 5%; }
+  #btn-pgup   { top: 20%; height: 11%; }
+  #btn-pgdown { top: 40%; height: 11%; }
+
+  /* Front paddles: two wide bars in the chin; each half is one button.
+     On-device order left to right: Back, Confirm, Left, Right. */
+  .paddle {
+    position: absolute;
+    bottom: 3.2%;
+    height: 3.4%;
+    width: 32%;
+    display: flex;
+    background: linear-gradient(180deg, var(--key-hi), var(--key-lo));
+    border: 1px solid var(--key-edge);
+    border-radius: 999px;
+    overflow: hidden;
+    box-shadow: 0 1px 0 rgba(255,255,255,.8) inset;
+  }
+  #paddle-left { left: 14.5%; }
+  #paddle-right { right: 14.5%; }
+  .paddle button {
+    flex: 1;
+    background: transparent;
+    border: 0;
+    cursor: pointer;
+    color: #8d9094;
+    font-size: calc(var(--dev-h) * 0.016);
+    padding: 0;
+  }
+  .paddle button:first-child { border-right: 1px solid rgba(0,0,0,.12); }
+  .paddle button:active, .paddle button.held { background: rgba(0,0,0,.10); }
 
   /* --- side panel ------------------------------------------------------------ */
   aside {
@@ -178,7 +209,7 @@
     font-family: ui-monospace, monospace;
   }
   #log {
-    max-height: 200px; overflow: auto;
+    max-height: 190px; overflow: auto;
     background: #101114; border-radius: 6px; padding: 8px;
     font: 11px/1.5 ui-monospace, monospace;
     white-space: pre-wrap; word-break: break-all;
@@ -202,24 +233,18 @@
   <span class="sub">real firmware, simulated hardware &middot; Xteink X4 (800&times;480 e-ink)</span>
   <span class="spacer"></span>
   <span class="toolbar">
+    <button id="tb-webui" title="Open the device's web interface (start File Transfer on the device first)" disabled>Device web UI &#8599;</button>
     <button id="tb-addbook" title="Copy an EPUB/TXT/XTC file into the simulated SD card">Add book&hellip;</button>
     <button id="tb-screenshot" title="Download the current screen as PNG">Screenshot</button>
-    <button id="tb-rotate" title="Rotate the on-page view (the firmware has its own orientation setting)">Rotate view</button>
+    <button id="tb-rotate" title="Turn the device sideways">Rotate device</button>
     <button id="tb-reset" title="Wipe the simulated SD card and reboot">Reset device</button>
   </span>
   <input id="file-input" type="file" accept=".epub,.txt,.xtc" multiple hidden>
 </header>
 
 <main>
-  <div id="device">
-    <div id="side-buttons">
-      <button class="dev-btn" data-btn="4" title="Side button: page back">&#9650;</button>
-      <button class="dev-btn" data-btn="5" title="Side button: page forward">&#9660;</button>
-    </div>
-    <div id="body-shell">
-      <div id="power-row">
-        <button class="dev-btn" id="btn-power" data-btn="6" title="Power button (hold to sleep)">&#9211;</button>
-      </div>
+  <div id="device-outer">
+    <div id="device">
       <div id="screen-wrap">
         <canvas id="screen" width="480" height="800"></canvas>
         <div id="flash-overlay"></div>
@@ -238,11 +263,16 @@
           <div>Drop to add to the library</div>
         </div>
       </div>
-      <div id="front-buttons">
-        <button class="dev-btn" data-btn="0" title="Back">&#8617;</button>
-        <button class="dev-btn" data-btn="2" title="Left">&#8592;</button>
-        <button class="dev-btn" data-btn="3" title="Right">&#8594;</button>
-        <button class="dev-btn" data-btn="1" title="Confirm">OK</button>
+      <button class="edge-key" id="btn-power" data-btn="6" title="Power (hold to sleep)"></button>
+      <button class="edge-key" id="btn-pgup" data-btn="4" title="Side button: page back"></button>
+      <button class="edge-key" id="btn-pgdown" data-btn="5" title="Side button: page forward"></button>
+      <div class="paddle" id="paddle-left">
+        <button data-btn="0" title="Back">&#8617;</button>
+        <button data-btn="1" title="Confirm">&#10003;</button>
+      </div>
+      <div class="paddle" id="paddle-right">
+        <button data-btn="2" title="Left">&#8592;</button>
+        <button data-btn="3" title="Right">&#8594;</button>
       </div>
     </div>
   </div>
@@ -254,7 +284,8 @@
         <dt>Firmware</dt><dd id="st-fw">loading</dd>
         <dt>Frames presented</dt><dd id="st-frames">0</dd>
         <dt>Last refresh</dt><dd id="st-refresh">&ndash;</dd>
-        <dt>Storage</dt><dd id="st-storage">IndexedDB (persistent)</dd>
+        <dt>Web server</dt><dd id="st-server">stopped</dd>
+        <dt>Storage</dt><dd>IndexedDB (persistent)</dd>
       </dl>
     </div>
     <div class="card">
@@ -267,6 +298,7 @@
         <tr><td>Back</td><td><kbd>Esc</kbd> or <kbd>Backspace</kbd></td></tr>
         <tr><td>Power</td><td><kbd>P</kbd> (hold to sleep)</td></tr>
         <tr><td>Add books</td><td>drag &amp; drop onto the screen</td></tr>
+        <tr><td>File Transfer</td><td>Home &rarr; File Transfer &rarr; any mode, then &ldquo;Device web UI&rdquo; above</td></tr>
       </table>
     </div>
     <div class="card">

@@ -331,6 +331,10 @@ class JsonVariantConst {
   template <typename T>
   bool is() const;
 
+  // Implicit read as a C string, e.g. `const char* s = doc["key"];`
+  // (defined out-of-line, after the as<const char*> specialization).
+  operator const char*() const;
+
   JsonVariantConst operator[](const char* key) const {
     return JsonVariantConst(n_ && n_->type == minijson::Node::Type::Obj ? n_->objGet(key) : nullptr);
   }
@@ -538,6 +542,12 @@ template <>
 inline std::string JsonVariantConst::as<std::string>() const {
   return (n_ && n_->type == minijson::Node::Type::Str) ? n_->s : std::string();
 }
+inline JsonVariantConst::operator const char*() const { return as<const char*>(); }
+class JsonVariant;
+template <>
+inline bool JsonVariantConst::is<JsonVariant>() const {  // "key exists" test
+  return n_ != nullptr && n_->type != minijson::Node::Type::Null;
+}
 template <>
 inline String JsonVariantConst::as<String>() const {
   return String(as<std::string>());
@@ -703,6 +713,18 @@ class JsonDocument {
     return JsonVariant(root_.get()).to<T>();
   }
 
+  // Root-as-array append: doc.add(value).
+  template <typename T>
+  bool add(const T& value) {
+    if (root_->type != minijson::Node::Type::Arr) {
+      root_->type = minijson::Node::Type::Arr;
+      root_->obj.clear();
+    }
+    root_->arr.push_back(std::make_unique<minijson::Node>());
+    JsonVariant(root_->arr.back().get()) = value;
+    return true;
+  }
+
   void clear() { *root_ = minijson::Node(); }
   bool overflowed() const { return false; }
 
@@ -772,4 +794,13 @@ inline size_t serializeJson(const JsonDocument& doc, String& out) {
   minijson::serializeNode(*doc.root(), tmp);
   out = String(tmp);
   return tmp.size();
+}
+inline size_t serializeJson(const JsonDocument& doc, char* buf, size_t bufSize) {
+  std::string tmp;
+  minijson::serializeNode(*doc.root(), tmp);
+  if (!buf || bufSize == 0) return 0;
+  const size_t n = tmp.size() < bufSize - 1 ? tmp.size() : bufSize - 1;
+  memcpy(buf, tmp.data(), n);
+  buf[n] = '\0';
+  return n;
 }

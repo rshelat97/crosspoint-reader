@@ -113,11 +113,27 @@ if(NOT I18N_GEN_RESULT EQUAL 0)
   message(FATAL_ERROR "gen_i18n.py failed (exit ${I18N_GEN_RESULT})")
 endif()
 
+# --- generated web server pages ------------------------------------------------
+# The File Transfer web UI ships as gzip-compressed .generated.h headers built
+# from src/network/html/*.html (a PlatformIO pre: script on device). Generate
+# them here so the REAL CrossPointWebServer compiles and serves the REAL pages.
+execute_process(
+  COMMAND "${Python3_EXECUTABLE}" "${REPO_ROOT}/scripts/build_html.py"
+  WORKING_DIRECTORY "${REPO_ROOT}"
+  RESULT_VARIABLE HTML_GEN_RESULT)
+if(NOT HTML_GEN_RESULT EQUAL 0)
+  message(FATAL_ERROR "build_html.py failed (exit ${HTML_GEN_RESULT})")
+endif()
+
 # --- firmware sources ---------------------------------------------------------
+# The web server + WebDAV compile for real (served through the browser bridge);
+# only the true network clients (HTTP download, OTA) stay stubbed, along with
+# the activities that depend on them.
 file(GLOB_RECURSE SRC_SOURCES "${REPO_ROOT}/src/*.cpp")
-list(FILTER SRC_SOURCES EXCLUDE REGEX "/src/network/")
-list(FILTER SRC_SOURCES EXCLUDE REGEX "WifiSelectionActivity\\.cpp$")
-list(FILTER SRC_SOURCES EXCLUDE REGEX "CrossPointWebServerActivity\\.cpp$")
+list(FILTER SRC_SOURCES EXCLUDE REGEX "/src/network/HttpDownloader\\.cpp$")
+list(FILTER SRC_SOURCES EXCLUDE REGEX "/src/network/OtaUpdater\\.cpp$")
+list(FILTER SRC_SOURCES EXCLUDE REGEX "/src/network/FirmwareFlasher\\.cpp$")
+list(FILTER SRC_SOURCES EXCLUDE REGEX "/src/network/OtaBootSwitch\\.cpp$")
 list(FILTER SRC_SOURCES EXCLUDE REGEX "CalibreConnectActivity\\.cpp$")
 list(FILTER SRC_SOURCES EXCLUDE REGEX "OpdsBookBrowserActivity\\.cpp$")
 list(FILTER SRC_SOURCES EXCLUDE REGEX "KOReaderSyncActivity\\.cpp$")
@@ -142,7 +158,7 @@ set(FREEINKUI_SOURCES "${REPO_ROOT}/freeink-sdk/libs/ui/FreeInkUI/src/FreeInkUI.
 
 file(GLOB HAL_SIM_SOURCES "${SIM_DIR}/hal_sim/*.cpp")
 file(GLOB SIM_SOURCES "${SIM_DIR}/sim/*.cpp")
-set(SHIM_SOURCES "${SIM_DIR}/shim/shim.cpp")
+set(SHIM_SOURCES "${SIM_DIR}/shim/shim.cpp" "${SIM_DIR}/shim/webserver_shim.cpp")
 set(STUB_SOURCES "${SIM_DIR}/stubs/net_client_stubs.cpp" "${SIM_DIR}/stubs/net_activity_stubs.cpp")
 
 add_executable(crosspoint_sim
@@ -190,6 +206,9 @@ target_compile_definitions(crosspoint_sim PRIVATE
 
 target_compile_options(crosspoint_sim PRIVATE
     $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions -fno-rtti>
+    # The gzip byte arrays in the generated web pages use 0..255 literals in a
+    # char[] — the Arduino device toolchain accepts this; match it here.
+    -Wno-narrowing
     -Wno-unused-parameter)
 
 if(EMSCRIPTEN)
@@ -200,10 +219,12 @@ if(EMSCRIPTEN)
       # HEAPU8 must be exported explicitly on newer emsdks (older ones always
       # attach it to Module); the frontend reads the RGBA framebuffer from it.
       -sEXPORTED_RUNTIME_METHODS=['FS','ccall','cwrap','HEAPU8']
-      -sEXPORTED_FUNCTIONS=['_main','_sim_button','_sim_touch','_sim_fb','_sim_fb_width','_sim_fb_height','_sim_fb_frame','_sim_refresh_mode','_sim_save_fs','_sim_fs_ready']
+      -sEXPORTED_FUNCTIONS=['_main','_sim_button','_sim_touch','_sim_fb','_sim_fb_width','_sim_fb_height','_sim_fb_frame','_sim_refresh_mode','_sim_save_fs','_sim_fs_ready','_sim_server_running','_sim_http_request','_sim_http_response_body','_sim_http_response_body_len','_sim_http_response_headers','_malloc','_free']
       -lidbfs.js
       -sFORCE_FILESYSTEM=1)
   # Make the build directory directly servable: static frontend + wasm output.
-  add_custom_command(TARGET crosspoint_sim POST_BUILD
-      COMMAND ${CMAKE_COMMAND} -E copy_directory "${SIM_DIR}/web" "$<TARGET_FILE_DIR:crosspoint_sim>")
+  # A standalone always-run target (not POST_BUILD) so frontend-only edits are
+  # copied even when the wasm is up to date.
+  add_custom_target(sim_web ALL
+      COMMAND ${CMAKE_COMMAND} -E copy_directory "${SIM_DIR}/web" "${CMAKE_CURRENT_BINARY_DIR}")
 endif()

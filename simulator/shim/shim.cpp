@@ -11,6 +11,7 @@
 #endif
 
 #include "Arduino.h"
+#include "ESPmDNS.h"
 #include "HardwareSerial.h"
 #include "SPI.h"
 #include "WiFi.h"
@@ -85,8 +86,14 @@ EspClass ESP;
 // --- global peripheral objects ----------------------------------------------
 HardwareSerial Serial;
 WiFiClass WiFi;
+const WiFiClass::FakeNetwork WiFiClass::FAKE_NETWORKS[WiFiClass::FAKE_NETWORK_COUNT] = {
+    {"Home Wi-Fi", -48, WIFI_AUTH_WPA2_PSK, 6},
+    {"CrossPoint Guest", -61, WIFI_AUTH_OPEN, 1},
+    {"Bookshop 2.4GHz", -74, WIFI_AUTH_WPA2_PSK, 11},
+};
 TwoWire Wire;
 SPIClass SPI;
+MDNSResponder MDNS;
 
 // --- FreeRTOS: tasks and semaphores ------------------------------------------
 namespace {

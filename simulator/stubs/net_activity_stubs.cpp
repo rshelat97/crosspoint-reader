@@ -1,12 +1,12 @@
-// Simulator stubs for the five network-dependent activities. Real headers,
-// minimal lifecycle bodies: each shows a notice and backs out via the cancel
-// path so every startActivityForResult caller takes its cancelled branch.
-// Hardcoded strings are acceptable here: this file is simulator-only and
-// never ships on device.
+// Simulator stubs for the network activities that remain out of scope.
+// (Wi-Fi selection and File Transfer are the REAL activities in the simulator,
+// running against the fake-radio WiFi shim and the browser-bridged WebServer.)
+// Real headers, minimal lifecycle bodies: each shows a notice and backs out via
+// the cancel path so every startActivityForResult caller takes its cancelled
+// branch. Hardcoded strings are acceptable here: this file is simulator-only
+// and never ships on device.
 #include "activities/browser/OpdsBookBrowserActivity.h"
 #include "activities/network/CalibreConnectActivity.h"
-#include "activities/network/CrossPointWebServerActivity.h"
-#include "activities/network/WifiSelectionActivity.h"
 #include "activities/reader/KOReaderSyncActivity.h"
 #include "components/UITheme.h"
 
@@ -20,38 +20,6 @@ bool backOrConfirmReleased(MappedInputManager& input) {
   return input.wasReleased(MappedInputManager::Button::Back) || input.wasReleased(MappedInputManager::Button::Confirm);
 }
 }  // namespace
-
-// --- WifiSelectionActivity ---------------------------------------------------
-void WifiSelectionActivity::onEnter() {
-  Activity::onEnter();
-  requestUpdate();
-}
-void WifiSelectionActivity::onExit() { Activity::onExit(); }
-void WifiSelectionActivity::loop() {
-  if (backOrConfirmReleased(mappedInput)) {
-    ActivityResult result;
-    result.isCancelled = true;
-    result.data = WifiResult{};
-    setResult(std::move(result));
-    finish();
-  }
-}
-void WifiSelectionActivity::render(RenderLock&&) {
-  renderUnavailable(renderer, "Wi-Fi is not available in the simulator");
-}
-
-// --- CrossPointWebServerActivity --------------------------------------------
-void CrossPointWebServerActivity::onEnter() {
-  Activity::onEnter();
-  requestUpdate();
-}
-void CrossPointWebServerActivity::onExit() { Activity::onExit(); }
-void CrossPointWebServerActivity::loop() {
-  if (backOrConfirmReleased(mappedInput)) onGoHome();
-}
-void CrossPointWebServerActivity::render(RenderLock&&) {
-  renderUnavailable(renderer, "File transfer is not available in the simulator");
-}
 
 // --- CalibreConnectActivity --------------------------------------------------
 void CalibreConnectActivity::onEnter() {

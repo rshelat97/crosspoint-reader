@@ -1,13 +1,17 @@
 // CrossPoint Simulator web frontend.
 //
-// The wasm module runs the REAL firmware; this file only:
-//   - blits the simulated e-ink framebuffer (800x480 RGBA) onto a canvas,
-//     rotated for how the device is held (default: portrait),
-//   - injects button presses (on-screen buttons + keyboard) and touch events
+// The wasm module runs the REAL firmware; this file:
+//   - blits the simulated e-ink framebuffer (800x480 RGBA) onto the device
+//     mock's canvas (the panel is mounted landscape; the firmware renders
+//     portrait via its own orientation transform — we rotate 90° when
+//     blitting, and the whole device mock can be turned sideways on top),
+//   - injects button presses (device keys + keyboard) and touch events
 //     (pointer events, converted to panel-native normalized coordinates —
 //     the firmware's own tapToLogical() applies the orientation transform),
 //   - copies dropped EPUB/TXT/XTC files into the simulated SD card (/simfs,
-//     persisted to IndexedDB).
+//     persisted to IndexedDB),
+//   - bridges the service worker to the firmware's web server so the REAL
+//     File Transfer web interface works under ./device/.
 'use strict';
 
 (function () {
@@ -29,9 +33,11 @@
   var stFw = document.getElementById('st-fw');
   var stFrames = document.getElementById('st-frames');
   var stRefresh = document.getElementById('st-refresh');
+  var stServer = document.getElementById('st-server');
+  var webuiBtn = document.getElementById('tb-webui');
 
   // Offscreen canvas holds the panel-native (800x480) image; the visible
-  // canvas draws it through a rotation transform.
+  // canvas draws it rotated 90° clockwise = the firmware's Portrait mapping.
   var off = document.createElement('canvas');
   off.width = PANEL_W;
   off.height = PANEL_H;
@@ -42,8 +48,10 @@
   var lastFrame = -1;
   var booted = false; // first frame presented
   var asleep = false;
-  var viewRotation = parseInt(localStorage.getItem('simViewRotation') || '90', 10);
-  if ([0, 90, 180, 270].indexOf(viewRotation) < 0) viewRotation = 90;
+  var serverRunning = false;
+  var swReady = false;
+  var deviceRotation = parseInt(localStorage.getItem('simDeviceRotation') || '0', 10);
+  if ([0, 90, 180, 270].indexOf(deviceRotation) < 0) deviceRotation = 0;
 
   // --- logging --------------------------------------------------------------
   var logLines = 0;
@@ -66,49 +74,22 @@
     toastEl.textContent = text;
     toastEl.className = warn ? 'show warn' : 'show';
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(function () { toastEl.className = ''; }, 3500);
+    toastTimer = setTimeout(function () { toastEl.className = ''; }, 4000);
   }
 
-  // --- view rotation --------------------------------------------------------
-  function applyRotation() {
-    var portrait = viewRotation === 90 || viewRotation === 270;
-    canvas.width = portrait ? PANEL_H : PANEL_W;
-    canvas.height = portrait ? PANEL_W : PANEL_H;
-    document.body.classList.toggle('landscape-view', !portrait);
-    blit();
+  // --- device rotation ------------------------------------------------------
+  function applyDeviceRotation() {
+    document.body.className = document.body.className.replace(/\bdev-rot-\d+\b/g, '').trim();
+    if (deviceRotation) document.body.classList.add('dev-rot-' + deviceRotation);
   }
 
+  // --- framebuffer blit -----------------------------------------------------
   function blit() {
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    switch (viewRotation) {
-      case 90: // panel rotated clockwise = firmware Portrait orientation
-        ctx.setTransform(0, 1, -1, 0, PANEL_H, 0);
-        break;
-      case 180:
-        ctx.setTransform(-1, 0, 0, -1, PANEL_W, PANEL_H);
-        break;
-      case 270:
-        ctx.setTransform(0, -1, 1, 0, 0, PANEL_W);
-        break;
-      default:
-        break;
-    }
+    ctx.setTransform(0, 1, -1, 0, PANEL_H, 0); // panel rotated clockwise = firmware Portrait
     ctx.drawImage(off, 0, 0);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
   }
 
-  // View-canvas pixel -> panel-native pixel (inverse of the blit transform).
-  function viewToPanel(vx, vy) {
-    switch (viewRotation) {
-      case 90: return [vy, PANEL_H - 1 - vx];
-      case 180: return [PANEL_W - 1 - vx, PANEL_H - 1 - vy];
-      case 270: return [PANEL_W - 1 - vy, vx];
-      default: return [vx, vy];
-    }
-  }
-
-  // --- framebuffer polling --------------------------------------------------
   function heapU8() {
     // ALLOW_MEMORY_GROWTH can detach the view; re-read it every frame.
     if (Module.HEAPU8 && Module.HEAPU8.byteLength) return Module.HEAPU8;
@@ -148,8 +129,7 @@
     if (api && !asleep) api.button(idx, down ? 1 : 0);
   }
 
-  var devButtons = document.querySelectorAll('.dev-btn[data-btn]');
-  devButtons.forEach(function (el) {
+  document.querySelectorAll('[data-btn]').forEach(function (el) {
     var idx = parseInt(el.dataset.btn, 10);
     var pressed = false;
     el.addEventListener('pointerdown', function (e) {
@@ -204,14 +184,18 @@
   });
 
   // --- touch ----------------------------------------------------------------
+  // offsetX/offsetY are in the canvas's own (untransformed) coordinate space,
+  // which stays correct when the whole device mock is CSS-rotated.
   function sendTouch(type, e) {
     if (!api || asleep) return;
-    var r = canvas.getBoundingClientRect();
-    var vx = (e.clientX - r.left) * canvas.width / r.width;
-    var vy = (e.clientY - r.top) * canvas.height / r.height;
-    var p = viewToPanel(vx, vy);
-    var nx = Math.min(1, Math.max(0, (p[0] + 0.5) / PANEL_W));
-    var ny = Math.min(1, Math.max(0, (p[1] + 0.5) / PANEL_H));
+    var vx = e.offsetX * canvas.width / canvas.clientWidth;
+    var vy = e.offsetY * canvas.height / canvas.clientHeight;
+    // Visible canvas (portrait 480x800) -> panel-native (800x480): inverse of
+    // the clockwise blit rotation.
+    var px = vy;
+    var py = PANEL_H - 1 - vx;
+    var nx = Math.min(1, Math.max(0, (px + 0.5) / PANEL_W));
+    var ny = Math.min(1, Math.max(0, (py + 0.5) / PANEL_H));
     api.touch(type, nx, ny);
   }
 
@@ -294,6 +278,13 @@
   });
 
   // --- toolbar --------------------------------------------------------------
+  webuiBtn.addEventListener('click', function () {
+    if (!serverRunning) {
+      toast('Start File Transfer on the device first: Home → File Transfer → any mode.', true);
+    }
+    window.open('device/', '_blank');
+  });
+
   document.getElementById('tb-screenshot').addEventListener('click', function () {
     var a = document.createElement('a');
     a.href = canvas.toDataURL('image/png');
@@ -302,9 +293,9 @@
   });
 
   document.getElementById('tb-rotate').addEventListener('click', function () {
-    viewRotation = (viewRotation + 90) % 360;
-    localStorage.setItem('simViewRotation', String(viewRotation));
-    applyRotation();
+    deviceRotation = (deviceRotation + 90) % 360;
+    localStorage.setItem('simDeviceRotation', String(deviceRotation));
+    applyDeviceRotation();
   });
 
   document.getElementById('tb-reset').addEventListener('click', function () {
@@ -328,6 +319,71 @@
   // --- sleep ----------------------------------------------------------------
   sleepOverlay.addEventListener('click', function () { location.reload(); });
 
+  // --- device web server bridge ---------------------------------------------
+  function announceToSw() {
+    if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+      navigator.serviceWorker.controller.postMessage({ type: 'sim-ready' });
+    }
+  }
+
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js').then(function () {
+      return navigator.serviceWorker.ready;
+    }).then(function () {
+      swReady = true;
+      webuiBtn.disabled = false;
+      announceToSw();
+    }).catch(function (err) {
+      log('[WEB] service worker registration failed: ' + err, true);
+    });
+    navigator.serviceWorker.addEventListener('controllerchange', announceToSw);
+
+    navigator.serviceWorker.addEventListener('message', function (e) {
+      var msg = e.data;
+      if (!msg || msg.type !== 'device-http') return;
+      var port = e.ports[0];
+      if (!api || !Module._sim_http_request) {
+        port.postMessage({ status: 0, headers: [], body: null });
+        return;
+      }
+      var headerBlock = '';
+      for (var i = 0; i + 1 < msg.headers.length; i += 2) {
+        headerBlock += msg.headers[i] + '\n' + msg.headers[i + 1] + '\n';
+      }
+      var bodyPtr = 0, bodyLen = 0;
+      if (msg.body && msg.body.byteLength) {
+        bodyLen = msg.body.byteLength;
+        bodyPtr = Module._malloc(bodyLen);
+        heapU8().set(new Uint8Array(msg.body), bodyPtr);
+      }
+      var status;
+      try {
+        status = Module.ccall('sim_http_request', 'number',
+            ['string', 'string', 'number', 'number', 'string'],
+            [msg.method, msg.path, bodyPtr, bodyLen, headerBlock]);
+      } finally {
+        if (bodyPtr) Module._free(bodyPtr);
+      }
+      var respHeaders = [];
+      if (status > 0) {
+        var hb = Module.ccall('sim_http_response_headers', 'string', [], []);
+        var parts = hb.split('\n');
+        for (var j = 0; j + 1 < parts.length; j += 2) respHeaders.push(parts[j], parts[j + 1]);
+      }
+      var respBody = null;
+      if (status > 0) {
+        var ptr = Module._sim_http_response_body();
+        var len = Module._sim_http_response_body_len();
+        respBody = heapU8().slice(ptr, ptr + len).buffer;
+      }
+      // Persist whatever the request changed (uploads, deletes, settings).
+      if (msg.method !== 'GET' && msg.method !== 'HEAD') api.saveFs();
+      port.postMessage({ status: status, headers: respHeaders, body: respBody }, respBody ? [respBody] : []);
+    });
+  } else {
+    log('[WEB] service workers unavailable — the device web UI bridge is disabled', true);
+  }
+
   // --- module bootstrap -----------------------------------------------------
   window.Module = {
     print: function (t) { log(t); },
@@ -342,6 +398,13 @@
         saveFs: Module.cwrap('sim_save_fs', null, [])
       };
       bootDetail.textContent = 'starting firmware';
+    },
+    onDeviceServer: function (running) {
+      serverRunning = !!running;
+      stServer.textContent = serverRunning ? 'running' : 'stopped';
+      if (serverRunning) {
+        toast('Device web server started — use "Device web UI" in the toolbar.');
+      }
     },
     onDeviceSleep: function () {
       asleep = true;
@@ -363,7 +426,7 @@
     document.body.appendChild(script);
   }
 
-  applyRotation();
+  applyDeviceRotation();
   requestAnimationFrame(drawLoop);
 
   // ?wipe=1 deletes the IndexedDB store BEFORE the wasm mounts it — the only

@@ -99,6 +99,18 @@ class IPAddress {
     snprintf(buf, sizeof(buf), "%u.%u.%u.%u", a_, b_, c_, d_);
     return String(buf);
   }
+  uint8_t operator[](int i) const {
+    switch (i) {
+      case 0:
+        return a_;
+      case 1:
+        return b_;
+      case 2:
+        return c_;
+      default:
+        return d_;
+    }
+  }
 
  private:
   uint8_t a_ = 0, b_ = 0, c_ = 0, d_ = 0;
