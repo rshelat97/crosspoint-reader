@@ -4,6 +4,9 @@ on:
     tags:
       - '*'
 
+permissions:
+  contents: write  # publish the GitHub Release
+
 jobs:
   build-release:
     runs-on: ubuntu-latest
@@ -44,4 +47,18 @@ jobs:
             .pio/build/gh_release/firmware.bin
             .pio/build/gh_release/firmware.elf
             .pio/build/gh_release/firmware.map
+            .pio/build/gh_release/partitions.bin
+
+      # Publish an actual GitHub Release with the flashable binaries attached
+      # (the elf/map debug files stay artifact-only above). Tags containing
+      # "rc" are marked as pre-releases.
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: CrossPoint ${{ github.ref_name }}
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, 'rc') }}
+          files: |
+            .pio/build/gh_release/bootloader.bin
+            .pio/build/gh_release/firmware.bin
             .pio/build/gh_release/partitions.bin
