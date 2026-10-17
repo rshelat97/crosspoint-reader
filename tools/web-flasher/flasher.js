@@ -264,13 +264,6 @@ ui.flash.addEventListener("click", () =>
     const deviceBoard = await readDeviceBoard(partitions);
     log(deviceBoard ? `Device runs CrossPoint for "${deviceBoard}".` : "Device firmware has no CrossPoint board tag (stock firmware?).");
     plan = planFlash({ ...base, deviceBoard });
-    const m = plan.boardMismatch;
-    if (m && confirm(`The device runs firmware for "${m.device}", but this file is for "${m.image}".\n\n` +
-        `Only continue if you are sure the device really is a "${m.image}" (for example, to recover it from ` +
-        `the wrong firmware). Flash anyway?`)) {
-      log(`Board check overridden: "${m.device}" → "${m.image}".`);
-      plan = planFlash(base);
-    }
     if (!plan.ok) throw new Error(plan.error);
 
     if (ui.backup.checked) await backup();

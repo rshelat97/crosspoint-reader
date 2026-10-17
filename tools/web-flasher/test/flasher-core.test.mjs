@@ -127,7 +127,6 @@ test("refuses firmware for a different board on the same chip", () => {
   const plan = planFlash({ image: image(9, 1024, "x4c"), connectedChip: "ESP32-S3", partitions: parts, deviceBoard: "x4pro" });
   assert.equal(plan.ok, false);
   assert.match(plan.error, /x4c.*x4pro/);
-  assert.deepEqual(plan.boardMismatch, { image: "x4c", device: "x4pro" });
   assert.equal(planFlash({ image: image(9, 1024, "x4pro"), connectedChip: "ESP32-S3", partitions: parts, deviceBoard: "x4pro" }).ok, true);
   // Stock firmware has no tag: allowed, like the firmware's own update guard.
   assert.equal(planFlash({ image: image(9, 1024, "x4pro"), connectedChip: "ESP32-S3", partitions: parts, deviceBoard: null }).ok, true);

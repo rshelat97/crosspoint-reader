@@ -124,11 +124,8 @@ export function planFlash({ image, connectedChip, partitions, deviceBoard = null
     };
   }
   if (deviceBoard && header.board && deviceBoard !== header.board) {
-    // Flagged so the page can offer an explicit override: recovering a device
-    // that already runs the wrong board's firmware needs exactly this flash.
     return {
       ok: false,
-      boardMismatch: { image: header.board, device: deviceBoard },
       error: `This firmware is for the "${header.board}" board, but the device runs CrossPoint for "${deviceBoard}". Pick the build for your device.`,
     };
   }
