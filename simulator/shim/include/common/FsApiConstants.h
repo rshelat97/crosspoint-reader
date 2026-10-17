@@ -4,7 +4,9 @@
 // them onto stdio modes.
 #include <cstdint>
 
-typedef uint8_t oflag_t;
+// int, as in SdFat on 32-bit targets: host <fcntl.h> values (e.g. Linux
+// O_TRUNC = 0x200) would be truncated by an 8-bit type.
+typedef int oflag_t;
 
 #ifndef O_RDONLY
 #define O_RDONLY 0x00
@@ -26,6 +28,9 @@ typedef uint8_t oflag_t;
 #endif
 #ifndef O_EXCL
 #define O_EXCL 0x40
+#endif
+#ifndef O_AT_END
+#define O_AT_END 0x4000  // SdFat: position at end of file after open
 #endif
 #ifndef O_WRITE
 #define O_WRITE O_WRONLY

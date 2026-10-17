@@ -3,6 +3,8 @@
 // implements the display on top of this in-memory framebuffer; the class
 // mirrors only what lib/hal/HalDisplay.h needs to compile (dimension
 // constants and a by-value member with the 6-pin constructor).
+#include <GrayscaleCapabilities.h>  // real SDK capability types
+
 #include <cstdint>
 #include <cstring>
 

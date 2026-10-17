@@ -12,6 +12,11 @@ struct SimTask {
 };
 using TaskHandle_t = SimTask*;
 using TaskFunction_t = void (*)(void*);
+using StackType_t = uint8_t;
+// Opaque TCB storage for static task creation (sized like ESP-IDF's).
+struct StaticTask_t {
+  uint8_t opaque[352];
+};
 
 enum eNotifyAction { eNoAction = 0, eSetBits, eIncrement, eSetValueWithOverwrite, eSetValueWithoutOverwrite };
 
@@ -27,6 +32,14 @@ inline BaseType_t xTaskCreatePinnedToCore(TaskFunction_t fn, const char*, uint32
 inline BaseType_t xTaskCreate(TaskFunction_t fn, const char* name, uint32_t stack, void* arg, UBaseType_t prio,
                               TaskHandle_t* outHandle) {
   return xTaskCreatePinnedToCore(fn, name, stack, arg, prio, outHandle, 0);
+}
+inline TaskHandle_t xTaskCreateStaticPinnedToCore(TaskFunction_t fn, const char*, uint32_t, void* arg, UBaseType_t,
+                                                  StackType_t*, StaticTask_t*, BaseType_t) {
+  return sim_registerTask(fn, arg);
+}
+inline TaskHandle_t xTaskCreateStatic(TaskFunction_t fn, const char* name, uint32_t stack, void* arg, UBaseType_t prio,
+                                      StackType_t* stackBuf, StaticTask_t* tcb) {
+  return xTaskCreateStaticPinnedToCore(fn, name, stack, arg, prio, stackBuf, tcb, 0);
 }
 inline void vTaskDelete(TaskHandle_t) {}
 void vTaskDelay(TickType_t ticks);

@@ -1,6 +1,6 @@
 #pragma once
 // Simulator shim: NVS preferences as an in-memory map (per-run only; the HAL
-// sim uses this solely for the device-type fingerprint cache).
+// sim uses this for the device-type cache and TrustedTime's clock floor).
 #include <cstdint>
 #include <map>
 #include <string>
@@ -20,6 +20,14 @@ class Preferences {
     store()[ns_ + "/" + key] = value;
     return 1;
   }
+  int64_t getLong64(const char* key, int64_t def = 0) {
+    auto it = store().find(ns_ + "/" + key);
+    return it == store().end() ? def : it->second;
+  }
+  size_t putLong64(const char* key, int64_t value) {
+    store()[ns_ + "/" + key] = value;
+    return 8;
+  }
   bool isKey(const char* key) { return store().count(ns_ + "/" + key) > 0; }
   bool remove(const char* key) { return store().erase(ns_ + "/" + key) > 0; }
   bool clear() {
@@ -28,8 +36,8 @@ class Preferences {
   }
 
  private:
-  static std::map<std::string, uint32_t>& store() {
-    static std::map<std::string, uint32_t> s;
+  static std::map<std::string, int64_t>& store() {
+    static std::map<std::string, int64_t> s;
     return s;
   }
   std::string ns_;

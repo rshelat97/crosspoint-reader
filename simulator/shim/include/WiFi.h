@@ -9,6 +9,8 @@
 #include <string>
 
 #include "Arduino.h"
+#include "Client.h"
+#include "esp_wifi.h"
 
 typedef enum { WIFI_MODE_NULL = 0, WIFI_MODE_STA, WIFI_MODE_AP, WIFI_MODE_APSTA } wifi_mode_t;
 #define WIFI_OFF WIFI_MODE_NULL
@@ -45,25 +47,25 @@ typedef enum {
 typedef enum { WIFI_FAST_SCAN = 0, WIFI_ALL_CHANNEL_SCAN } wifi_scan_method_t;
 typedef enum { WIFI_CONNECT_AP_BY_SIGNAL = 0, WIFI_CONNECT_AP_BY_SECURITY } wifi_sort_method_t;
 
-// Client type (NetworkClient in arduino-esp32 v3). There is no real socket:
-// the WebServer shim points `sink` at the current response body, so handlers
-// that stream raw bytes through client().write() (file downloads, WebDAV GET)
-// still produce complete responses.
-class NetworkClient {
+// Client type (NetworkClient in arduino-esp32 v3), derived from Arduino's
+// Client like the real one so SecureNet's SecureClient/SecureHttpClient
+// compile unchanged. There is no real socket: outbound connect() fails (the
+// simulator has no network), while the WebServer shim points `sink` at the
+// current response body so handlers that stream raw bytes through
+// client().write() (file downloads, WebDAV GET) still produce responses.
+class NetworkClient : public Client {
  public:
   std::string* sink = nullptr;
 
-  operator bool() const { return sink != nullptr; }
-  bool connected() const { return sink != nullptr; }
-  void stop() {}
-  int read() { return -1; }
-  int read(uint8_t*, size_t) { return -1; }
-  void clear() {}
-  size_t write(uint8_t b) {
+  using Print::write;
+  int connect(IPAddress, uint16_t) override { return 0; }
+  int connect(const char*, uint16_t) override { return 0; }
+  int connect(const char* host, uint16_t port, int32_t /*timeoutMs*/) { return connect(host, port); }
+  size_t write(uint8_t b) override {
     if (sink) sink->push_back(static_cast<char>(b));
     return 1;
   }
-  size_t write(const uint8_t* buf, size_t len) {
+  size_t write(const uint8_t* buf, size_t len) override {
     if (sink) sink->append(reinterpret_cast<const char*>(buf), len);
     return len;
   }
@@ -80,14 +82,41 @@ class NetworkClient {
     }
     return total;
   }
+  int available() override { return 0; }
+  int read() override { return -1; }
+  int read(uint8_t*, size_t) override { return -1; }
+  int peek() override { return -1; }
+  void flush() override {}
+  void stop() override {}
+  uint8_t connected() override { return sink != nullptr; }
+  operator bool() override { return sink != nullptr; }
+  void clear() {}
+  void setConnectionTimeout(uint32_t) {}
+  void setNoDelay(bool) {}
   IPAddress remoteIP() const { return IPAddress(127, 0, 0, 1); }
   uint16_t remotePort() const { return 0; }
   void setTimeout(uint32_t) {}
 };
 using WiFiClient = NetworkClient;
 
+typedef enum {
+  ARDUINO_EVENT_WIFI_READY = 0,
+  ARDUINO_EVENT_WIFI_STA_START,
+  ARDUINO_EVENT_WIFI_STA_CONNECTED,
+  ARDUINO_EVENT_WIFI_STA_DISCONNECTED,
+  ARDUINO_EVENT_WIFI_STA_GOT_IP,
+  ARDUINO_EVENT_WIFI_AP_START,
+  ARDUINO_EVENT_MAX
+} arduino_event_id_t;
+typedef struct {
+  int unused;
+} arduino_event_info_t;
+using WiFiEventFuncCb = void (*)(arduino_event_id_t, arduino_event_info_t);
+
 class WiFiClass {
  public:
+  // Event registration: the fake radio never emits driver events.
+  int onEvent(WiFiEventFuncCb, arduino_event_id_t = ARDUINO_EVENT_MAX) { return 0; }
   struct FakeNetwork {
     const char* ssid;
     int rssi;

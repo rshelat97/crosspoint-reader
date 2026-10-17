@@ -130,41 +130,78 @@ endif()
 # only the true network clients (HTTP download, OTA) stay stubbed, along with
 # the activities that depend on them.
 file(GLOB_RECURSE SRC_SOURCES "${REPO_ROOT}/src/*.cpp")
-list(FILTER SRC_SOURCES EXCLUDE REGEX "/src/network/HttpDownloader\\.cpp$")
 list(FILTER SRC_SOURCES EXCLUDE REGEX "/src/network/OtaUpdater\\.cpp$")
 list(FILTER SRC_SOURCES EXCLUDE REGEX "/src/network/FirmwareFlasher\\.cpp$")
 list(FILTER SRC_SOURCES EXCLUDE REGEX "/src/network/OtaBootSwitch\\.cpp$")
 list(FILTER SRC_SOURCES EXCLUDE REGEX "CalibreConnectActivity\\.cpp$")
-list(FILTER SRC_SOURCES EXCLUDE REGEX "OpdsBookBrowserActivity\\.cpp$")
-list(FILTER SRC_SOURCES EXCLUDE REGEX "KOReaderSyncActivity\\.cpp$")
 
 set(LIB_DIRS
-    EpdFont Epub FsHelpers GfxRenderer I18n InflateReader JsonParser
-    KOReaderSync Logging Memory MiniBidi OpdsParser PngToBmpConverter
-    JpegToBmpConverter Serialization Txt Utf8 XmlParserUtils Xtc ZipFile)
+    AsciiText DeviceSecret EpdFont Epub FsHelpers GfxRenderer HttpHeader I18n InflateReader
+    JsonParser KOReaderSync LibraryIndex Logging Memory MiniBidi PngToBmpConverter
+    JpegToBmpConverter Serialization TrustedTime Txt Utf8 XmlParserUtils Xtc ZipFile)
 set(LIB_SOURCES "")
 foreach(libdir ${LIB_DIRS})
   file(GLOB_RECURSE one "${REPO_ROOT}/lib/${libdir}/*.cpp" "${REPO_ROOT}/lib/${libdir}/*.c")
   list(APPEND LIB_SOURCES ${one})
 endforeach()
-list(FILTER LIB_SOURCES EXCLUDE REGEX "KOReaderSyncClient\\.cpp$")
+list(FILTER LIB_SOURCES EXCLUDE REGEX "/lib/[^/]+/test/")
+# Header-only in the simulator: hardware/BLE/NVS-backed libs get sim
+# implementations in hal_sim/ or stubs/ instead of their device sources.
+# BlePageTurner compiles for real with its NoRadio backend (the one any
+# build without FREEINK_CAP_BLE_HID_HOST uses): BLE simply reports "no radio".
+file(GLOB BLE_SOURCES "${REPO_ROOT}/lib/BlePageTurner/src/*.cpp")
+list(APPEND LIB_SOURCES ${BLE_SOURCES})
+set(LIB_INCLUDE_ONLY BlePageTurner/include BlePageTurner/src)
+# lib/hal: device sources are replaced by simulator/hal_sim, except files that
+# are already host-portable and compile for real.
+foreach(hal HalClock HalMemory HalFrontlight)
+  list(APPEND LIB_SOURCES "${REPO_ROOT}/lib/hal/${hal}.cpp")
+endforeach()
 
 set(EXPAT_SOURCES "${REPO_ROOT}/lib/expat/xmlparse.c" "${REPO_ROOT}/lib/expat/xmlrole.c"
                   "${REPO_ROOT}/lib/expat/xmltok.c")
 file(GLOB MINIZ_SOURCES "${REPO_ROOT}/lib/miniz/*.c" "${REPO_ROOT}/lib/miniz/src/*.c"
      "${REPO_ROOT}/lib/miniz/src/*.cpp")
 file(GLOB UZLIB_SOURCES "${REPO_ROOT}/lib/uzlib/*.c" "${REPO_ROOT}/lib/uzlib/src/*.c")
-set(FREEINKUI_SOURCES "${REPO_ROOT}/freeink-sdk/libs/ui/FreeInkUI/src/FreeInkUI.cpp")
+
+# --- freeink-sdk libraries ----------------------------------------------------
+# Mirrors the lib_deps the X4 env links. Portable logic compiles for real
+# (FreeType, JSON SAX, OPDS/catalog parsing, content protection); hardware and
+# TLS/BLE backends are include-only and stubbed in simulator/stubs.
+set(SDK "${REPO_ROOT}/freeink-sdk/libs")
+set(SDK_COMPILED
+    ui/FreeInkUI hardware/MemoryManager network/JsonSax network/CatalogList
+    network/Opds network/SecureNet hardware/XteinkDetect book/ContentProtection
+    font/FreeInkFont)
+set(SDK_INCLUDE_ONLY
+    assets/Icons hardware/BoardConfig display/FreeInkDisplay network/BleKeyboardHost hardware/FrontlightManager hardware/HapticManager)
+set(SDK_SOURCES "")
+set(SDK_INCLUDES "")
+foreach(lib ${SDK_COMPILED})
+  file(GLOB_RECURSE one "${SDK}/${lib}/src/*.cpp" "${SDK}/${lib}/src/*.c")
+  list(APPEND SDK_SOURCES ${one})
+  list(APPEND SDK_INCLUDES "${SDK}/${lib}/include" "${SDK}/${lib}/src")
+endforeach()
+foreach(lib ${SDK_INCLUDE_ONLY})
+  list(APPEND SDK_INCLUDES "${SDK}/${lib}/include")
+endforeach()
+# Content protection: miniz binds to lib/miniz (CONTENT_EXTERNAL_MINIZ, as on
+# device); the wolfSSL crypto backend is replaced by stubs/content_stubs.cpp.
+list(FILTER SDK_SOURCES EXCLUDE REGEX "ContentProtection/src/WolfsslCrypto\\.cpp$")
+list(FILTER SDK_SOURCES EXCLUDE REGEX "ContentProtection/src/vendor/")
+list(APPEND SDK_INCLUDES
+    "${SDK}/font/FreeInkFont/third_party/freetype/include"
+    "${SDK}/font/FreeInkFont/third_party/stb")
 
 file(GLOB HAL_SIM_SOURCES "${SIM_DIR}/hal_sim/*.cpp")
 file(GLOB SIM_SOURCES "${SIM_DIR}/sim/*.cpp")
 set(SHIM_SOURCES "${SIM_DIR}/shim/shim.cpp" "${SIM_DIR}/shim/webserver_shim.cpp")
-set(STUB_SOURCES "${SIM_DIR}/stubs/net_client_stubs.cpp" "${SIM_DIR}/stubs/net_activity_stubs.cpp")
+file(GLOB STUB_SOURCES "${SIM_DIR}/stubs/*.cpp")
 
 add_executable(crosspoint_sim
     ${SRC_SOURCES} ${LIB_SOURCES} ${EXPAT_SOURCES} ${MINIZ_SOURCES} ${UZLIB_SOURCES}
     ${HAL_SIM_SOURCES} ${SIM_SOURCES} ${SHIM_SOURCES} ${STUB_SOURCES} ${JPEGDEC_SOURCES}
-    ${PNGDEC_SOURCES} ${QRCODE_SOURCES} ${FREEINKUI_SOURCES})
+    ${PNGDEC_SOURCES} ${QRCODE_SOURCES} ${SDK_SOURCES})
 
 target_include_directories(crosspoint_sim BEFORE PRIVATE
     "${SIM_DIR}/shim/include"
@@ -176,7 +213,7 @@ target_include_directories(crosspoint_sim BEFORE PRIVATE
 target_include_directories(crosspoint_sim PRIVATE
     "${REPO_ROOT}/src"
     "${REPO_ROOT}/lib/hal")
-foreach(libdir ${LIB_DIRS})
+foreach(libdir ${LIB_DIRS} ${LIB_INCLUDE_ONLY})
   target_include_directories(crosspoint_sim PRIVATE "${REPO_ROOT}/lib/${libdir}")
 endforeach()
 target_include_directories(crosspoint_sim PRIVATE
@@ -185,10 +222,16 @@ target_include_directories(crosspoint_sim PRIVATE
     "${REPO_ROOT}/lib/miniz/src"
     "${REPO_ROOT}/lib/uzlib"
     "${REPO_ROOT}/lib/uzlib/src"
-    "${REPO_ROOT}/freeink-sdk/libs/ui/FreeInkUI/include"
-    "${REPO_ROOT}/freeink-sdk/libs/assets/Icons/include")
+    ${SDK_INCLUDES})
 
 target_compile_definitions(crosspoint_sim PRIVATE
+    # Same device profile + feature flags as platformio.ini [env:default].
+    FREEINK_DEVICE_X4=1
+    FREEINK_DEVICE_X3=1
+    FREEINK_FONT_ENABLE_AUTOHINT=1
+    CONTENT_EXTERNAL_MINIZ=1
+    # Declares WolfsslCrypto; its simulator backend is stubs/crypto_stubs.cpp.
+    FREEINK_CONTENT_WOLFSSL=1
     # The real ArduinoJson only accepts our ::String shim through its Arduino
     # String integration (adapter reads via c_str()/length(), writer appends
     # via concat()/operator+=). Auto-enabled on device by ARDUINO; opt in here.

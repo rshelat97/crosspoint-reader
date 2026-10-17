@@ -12,5 +12,8 @@ class TwoWire {
   uint8_t requestFrom(uint8_t, uint8_t, bool = true) { return 0; }
   int available() { return 0; }
   int read() { return -1; }
+  void end() {}
+  void setTimeOut(uint16_t) {}
+  void setClock(uint32_t) {}
 };
 extern TwoWire Wire;
