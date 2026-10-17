@@ -116,7 +116,7 @@ class Writer {
   bool isValid() const;
   const PageSpec& spec() const { return pageSpec; }
 
-  bool begin(WriteFn write, void* ctx);  // writes the header
+  bool begin(WriteFn write, void* ctx);   // writes the header
   bool addImageRow(const uint8_t* lum8);  // imageWidth bytes
   bool finish();                          // pads the rest white, flushes the last band
 
