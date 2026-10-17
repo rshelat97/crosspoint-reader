@@ -4,11 +4,12 @@
 // (writer), and stream one plane back into a framebuffer (reader).
 // Format, bit conventions and tile geometry: docs/comics-gray16.md.
 //
-// Host-portable: no Arduino, HAL or heap-tracking dependencies. I/O goes
-// through caller-supplied functions so the same code runs in host tests, the
-// simulator and on the device (HalFile adapters live in lib/Cbz).
+// Host-portable: no Arduino or HAL dependencies (Memory.h is std-only). I/O
+// goes through caller-supplied functions so the same code runs in host tests,
+// the simulator and on the device (HalFile adapters live in lib/Cbz).
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 
 namespace gray16 {
 
@@ -85,7 +86,10 @@ using WriteFn = bool (*)(void* ctx, const uint8_t* data, size_t len);
 using ReadAtFn = bool (*)(void* ctx, uint32_t offset, uint8_t* dst, size_t len);
 
 // Floyd-Steinberg error diffusion to 16 levels. Deterministic. Rows are
-// processed left to right; call nextRow() after each row.
+// processed left to right; call nextRow() after each row. Luminances that
+// are exact multiples of 17 come back as lum / 17 with no error carried.
+// A zero width or a failed allocation leaves the ditherer invalid; it then
+// quantizes without diffusing.
 class Ditherer {
  public:
   explicit Ditherer(uint16_t width);
@@ -93,15 +97,17 @@ class Ditherer {
   Ditherer(const Ditherer&) = delete;
   Ditherer& operator=(const Ditherer&) = delete;
   bool isValid() const { return errCur != nullptr; }
-  // 8-bit luminance in, brightness 0..15 out.
+  // 8-bit luminance in, brightness 0..15 out. `x` must be below `width`.
   uint8_t processPixel(uint8_t lum, uint16_t x);
   void nextRow();
   void reset();
 
  private:
   uint16_t width;
-  int16_t* errCur = nullptr;   // width + 2 entries, index x + 1
-  int16_t* errNext = nullptr;  // width + 2 entries
+  // Error rows in 1/16 luminance units, width + 2 entries, index x + 1; the
+  // extra entry on each side absorbs the diagonal shares at the row ends.
+  std::unique_ptr<int16_t[]> errCur;
+  std::unique_ptr<int16_t[]> errNext;
 };
 
 // Streams one page: header, then band tiles. Feed exactly imageHeight image
@@ -116,24 +122,31 @@ class Writer {
   bool isValid() const;
   const PageSpec& spec() const { return pageSpec; }
 
-  bool begin(WriteFn write, void* ctx);   // writes the header
-  bool addImageRow(const uint8_t* lum8);  // imageWidth bytes
-  bool finish();                          // pads the rest white, flushes the last band
+  // Writes the header. A finished writer can begin() again for a new page.
+  bool begin(WriteFn write, void* ctx);
+  // imageWidth bytes. False before begin(), after imageHeight rows, or once a
+  // write has failed (the failure is sticky until the next begin()).
+  bool addImageRow(const uint8_t* lum8);
+  // Pads the rest white and flushes the last band. False when a write failed
+  // or fewer than imageHeight rows were added (the file is still complete).
+  bool finish();
 
  private:
+  bool startBand();                             // sizes and whitens the tiles of currentBand
   bool emitPageRow(const uint8_t* lum8OrNull);  // null = white row
-  bool flushBand();
+  bool flushBand();                             // writes the band, starts the next
   PageSpec pageSpec;
   WriteFn writeFn = nullptr;
   void* writeCtx = nullptr;
-  uint8_t* bandTiles = nullptr;  // PLANE_COUNT tiles of the current band
-  uint32_t tileBytes = 0;        // bytes per plane tile of the current band
+  std::unique_ptr<uint8_t[]> bandTiles;  // PLANE_COUNT tiles of the current band
+  uint32_t tileBytes = 0;                // bytes per plane tile of the current band
   uint16_t currentBand = 0;
-  uint16_t pageRow = 0;   // next logical row to emit
-  uint16_t imageRow = 0;  // image rows received
-  Ditherer* ditherer = nullptr;
+  uint16_t pageRow = 0;                // next logical row to emit
+  uint16_t imageRow = 0;               // image rows received
+  std::unique_ptr<Ditherer> ditherer;  // null when imageWidth == 0
   bool valid = false;
   bool begun = false;
+  bool failed = false;
 };
 
 // Reads planes from a page file through a random-access callback.
@@ -147,7 +160,8 @@ class Reader {
   // spec().panelHeight, stride panelWidth / 8, overwriting every byte it
   // covers. `scratch` must hold at least spec().maxTileBytes() bytes.
   bool loadPlane(uint8_t k, uint8_t* framebuffer, uint8_t* scratch, size_t scratchLen) const;
-  // Byte offset of plane k's tile for `band`, for callers that stream tiles themselves.
+  // Byte offset of plane k's tile for `band`, for callers that stream tiles
+  // themselves. 0 when not open or when band / k is out of range.
   uint32_t tileOffset(uint16_t band, uint8_t k) const;
 
  private:
