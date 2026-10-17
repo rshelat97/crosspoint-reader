@@ -89,6 +89,8 @@ function showFirmware(name, bytes, downloadUrl, expectedBoard = null) {
   const header = parseImageHeader(bytes);
   if (!header.ok) {
     showError(header.error);
+  } else if (expectedBoard && !header.board) {
+    showError(`${name} has no CrossPoint board tag, so it can't be checked against "${expectedBoard}". Not flashing it.`);
   } else if (expectedBoard && header.board !== expectedBoard) {
     showError(`${name} contains firmware for "${header.board}", not "${expectedBoard}". Not flashing it.`);
   } else {
@@ -235,8 +237,17 @@ async function backup() {
     throw new Error("Couldn't detect the flash size, so the backup can't be trusted. Nothing was written.");
   }
   setState(`Backing up ${sizeName}… keep the device connected.`);
-  const image = await loader.readFlash(0, size, (_pkt, done, total) => setProgress(done, total));
-  if (image.length !== size) throw new Error(`Backup came back short (${image.length} of ${size} bytes). Nothing was written.`);
+  // 1 MB reads: esptool-js re-copies its buffer per packet, so one 16 MB read gets slow.
+  const image = new Uint8Array(size);
+  const CHUNK = 0x100000;
+  for (let off = 0; off < size; off += CHUNK) {
+    const part = await loader.readFlash(off, Math.min(CHUNK, size - off));
+    if (part.length !== Math.min(CHUNK, size - off)) {
+      throw new Error(`Backup came back short at ${off + part.length} of ${size} bytes. Nothing was written.`);
+    }
+    image.set(part, off);
+    setProgress(off + part.length, size);
+  }
   saveFile(image, `xteink-backup-${new Date().toISOString().slice(0, 10)}.bin`);
   log(`Backup saved (${size} bytes).`);
 }
@@ -246,10 +257,20 @@ ui.flash.addEventListener("click", () =>
     const fw = firmware;
     setState("Reading partition table…");
     const partitions = parsePartitionTable(await loader.readFlash(PARTITION_TABLE_OFFSET, PARTITION_TABLE_SIZE));
+    const base = { image: fw.bytes, connectedChip: loader.chip.CHIP_NAME, partitions };
+    let plan = planFlash(base);  // chip, size and layout first: they need no slow device scan
+    if (!plan.ok) throw new Error(plan.error);
     setState("Checking which board this device is…");
     const deviceBoard = await readDeviceBoard(partitions);
     log(deviceBoard ? `Device runs CrossPoint for "${deviceBoard}".` : "Device firmware has no CrossPoint board tag (stock firmware?).");
-    const plan = planFlash({ image: fw.bytes, connectedChip: loader.chip.CHIP_NAME, partitions, deviceBoard });
+    plan = planFlash({ ...base, deviceBoard });
+    const m = plan.boardMismatch;
+    if (m && confirm(`The device runs firmware for "${m.device}", but this file is for "${m.image}".\n\n` +
+        `Only continue if you are sure the device really is a "${m.image}" (for example, to recover it from ` +
+        `the wrong firmware). Flash anyway?`)) {
+      log(`Board check overridden: "${m.device}" → "${m.image}".`);
+      plan = planFlash(base);
+    }
     if (!plan.ok) throw new Error(plan.error);
 
     if (ui.backup.checked) await backup();

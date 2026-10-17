@@ -74,7 +74,7 @@
       <li>Connect the device with a USB-C data cable and wake it.</li>
       <li>Click <b>Connect</b> and pick the device (often "USB JTAG/serial debug unit").</li>
     </ol>
-    <label><input type="checkbox" id="backup"> Save a full 16 MB backup of the device first
+    <label><input type="checkbox" id="backup"> Save a full backup of the device's flash first
       (a few minutes; keep it for recovery)</label>
     <button id="connect">Connect</button>
     <button id="flash" disabled>Flash</button>
@@ -103,7 +103,7 @@
       <summary>Device already runs CrossPoint (this fork or upstream)</summary>
       <p><b>Over Wi-Fi:</b> Settings → System → <b>Check for Updates</b>. This fork's builds update from this
         fork's releases. Upstream builds update from upstream, so use the SD card once to switch.</p>
-      <p><b>From the SD card</b> (CrossPoint 1.3.0 or newer):</p>
+      <p><b>From the SD card</b> (if Settings → System has <b>SD Card Firmware Update</b>):</p>
       <ol>
         <li>Download the firmware for your device from step 1 (or the Releases page).</li>
         <li>Copy the <code>.bin</code> to the SD card, or upload it with File Transfer.</li>

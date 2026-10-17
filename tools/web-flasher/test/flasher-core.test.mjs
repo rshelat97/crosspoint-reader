@@ -82,6 +82,7 @@ test("reads the chip from the image header", () => {
 test("finds the board tag and maps release names to it", () => {
   assert.equal(findBoardTag(image(9, 1024, "x4pro")), "x4pro");
   assert.equal(findBoardTag(image(9)), null);
+  assert.equal(parseImageHeader(image(9)).board, null);  // untagged: page refuses it as a release asset
   assert.equal(parseImageHeader(image(5, 1024, "x4")).board, "x4");
   assert.equal(boardForAsset("x3-x4"), "x4");
   assert.equal(boardForAsset("sticky"), "sticky");
@@ -126,6 +127,7 @@ test("refuses firmware for a different board on the same chip", () => {
   const plan = planFlash({ image: image(9, 1024, "x4c"), connectedChip: "ESP32-S3", partitions: parts, deviceBoard: "x4pro" });
   assert.equal(plan.ok, false);
   assert.match(plan.error, /x4c.*x4pro/);
+  assert.deepEqual(plan.boardMismatch, { image: "x4c", device: "x4pro" });
   assert.equal(planFlash({ image: image(9, 1024, "x4pro"), connectedChip: "ESP32-S3", partitions: parts, deviceBoard: "x4pro" }).ok, true);
   // Stock firmware has no tag: allowed, like the firmware's own update guard.
   assert.equal(planFlash({ image: image(9, 1024, "x4pro"), connectedChip: "ESP32-S3", partitions: parts, deviceBoard: null }).ok, true);

@@ -124,14 +124,17 @@ export function planFlash({ image, connectedChip, partitions, deviceBoard = null
     };
   }
   if (deviceBoard && header.board && deviceBoard !== header.board) {
+    // Flagged so the page can offer an explicit override: recovering a device
+    // that already runs the wrong board's firmware needs exactly this flash.
     return {
       ok: false,
+      boardMismatch: { image: header.board, device: deviceBoard },
       error: `This firmware is for the "${header.board}" board, but the device runs CrossPoint for "${deviceBoard}". Pick the build for your device.`,
     };
   }
   // With a factory or test app present, blank otadata boots that app instead of ota_0.
   if (partitions.some((p) => p.type === TYPE_APP && (p.subtype === SUBTYPE_FACTORY || p.subtype === SUBTYPE_TEST))) {
-    return { ok: false, error: "The device has a factory/test app partition, so the new firmware would not boot. Refusing." };
+    return { ok: false, error: "The device has a factory/test app partition, so the new firmware would not boot. Nothing was written." };
   }
   const ota0 = partitions.find((p) => p.type === TYPE_APP && p.subtype === SUBTYPE_OTA_0);
   const otadata = findOtadata(partitions);
