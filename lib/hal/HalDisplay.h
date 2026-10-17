@@ -120,6 +120,26 @@ class HalDisplay {
   // the whole text body (a visible flash).
   bool combinesGrayscaleBase() const;
 
+  // 16-level grayscale as two absolute 4-level passes with distinct waveforms.
+  // Pass 0 (coarse) carries brightness bits 3..2, pass 1 (fine) bits 1..0, as
+  // LSB/MSB planes in the absolute encoding (bit set = that brightness bit is
+  // 1, framebuffer layout). Protocol:
+  //   if (beginGray16()) {
+  //     for (pass = 0; pass < 2; pass++) {
+  //       copyGrayscaleLsbBuffers(plane[pass == 0 ? 2 : 0]);
+  //       copyGrayscaleMsbBuffers(plane[pass == 0 ? 3 : 1]);
+  //       displayGray16Pass(pass);
+  //     }
+  //     endGray16(bwBaseline);  // B/W approximation (plane 3): restores the differential baseline
+  //   }
+  // Panels without 16-level waveforms return false from beginGray16() and
+  // supportsGray16(); callers then use the 4-level Overlay path. See
+  // docs/comics-gray16.md.
+  bool supportsGray16() const;
+  bool beginGray16();
+  void displayGray16Pass(uint8_t pass);
+  void endGray16(const uint8_t* bwBaseline);
+
   // Runtime geometry passthrough
   uint16_t getDisplayWidth() const;
   uint16_t getDisplayHeight() const;

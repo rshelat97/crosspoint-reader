@@ -138,7 +138,7 @@ list(FILTER SRC_SOURCES EXCLUDE REGEX "CalibreConnectActivity\\.cpp$")
 set(LIB_DIRS
     AsciiText DeviceSecret EpdFont Epub FsHelpers GfxRenderer HttpHeader I18n InflateReader
     JsonParser KOReaderSync LibraryIndex Logging Memory MiniBidi PngToBmpConverter
-    JpegToBmpConverter Serialization TrustedTime Txt Utf8 XmlParserUtils Xtc ZipFile)
+    JpegToBmpConverter Serialization TrustedTime Txt Utf8 XmlParserUtils Xtc ZipFile Gray16 Cbz)
 set(LIB_SOURCES "")
 foreach(libdir ${LIB_DIRS})
   file(GLOB_RECURSE one "${REPO_ROOT}/lib/${libdir}/*.cpp" "${REPO_ROOT}/lib/${libdir}/*.c")

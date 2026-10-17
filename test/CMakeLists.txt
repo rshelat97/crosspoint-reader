@@ -77,6 +77,9 @@ add_subdirectory(http_header)
 add_subdirectory(txt_to_html)
 
 add_subdirectory(absolute_grayscale)
+add_subdirectory(gray16)
+add_subdirectory(cbz)
+add_subdirectory(sim_display)
 
 add_subdirectory(sd_card_font)
 add_subdirectory(clipping_preview)
