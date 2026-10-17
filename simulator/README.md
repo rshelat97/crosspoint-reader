@@ -9,7 +9,10 @@ behaviour are faithful.
 ## Try it
 
 The GitHub Actions workflow (`.github/workflows/simulator.yml`) builds the
-WASM bundle on every push and deploys it to GitHub Pages.
+WASM bundle on every push and deploys it to GitHub Pages, together with the
+USB web flasher (`tools/web-flasher/`, served at `flash/`) and the latest
+release's firmware. It also redeploys after "Compile Release" finishes, so a
+new release shows up in the flasher.
 
 One-time setup: repository **Settings → Pages → Build and deployment →
 Source: "GitHub Actions"**. To deploy from a non-default branch, also allow it
@@ -126,5 +129,6 @@ Key design points:
   shows a notice.
 - TLS, DRM-protected (LCP) books and BLE page turners: crypto ciphers report
   failure and BLE uses the SDK's no-radio backend.
-- OTA flashing, battery drain (fixed 87%), USB, and the tilt sensor.
+- OTA flashing, battery drain (fixed 87%), USB, the USB-lock fuses (always
+  Unlocked), and the tilt sensor.
 - E-ink refresh artifacts: a FULL refresh is visualised with a brief flash.

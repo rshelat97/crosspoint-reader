@@ -72,6 +72,10 @@ https://crosspointreader.com/#unlock-tool before you can flash CrossPoint.
 [Install firmware](#install-firmware) below). If the browser's serial device picker does not show your device, try a different
 USB port or browser before assuming the device is locked. Only reach for the unlocker if the device still doesn't appear.
 
+**This fork:** **Settings → System → About** shows **USB Flashing** (Unlocked, Locked… or Secure only), read from the
+chip's fuses. This fork's builds update over Wi-Fi from this fork's releases, and its web flasher at
+https://rshelat97.github.io/crosspoint-reader/flash/ walks locked devices through the non-USB routes.
+
 > ### ⚠️ WARNING: READ THIS BEFORE USING THE UNLOCKER ⚠️
 > 
 > **The only officially supported firmwares in the unlock tool are CrossPoint and CrossInk.**

@@ -125,7 +125,10 @@ jobs:
           cp tools/web-flasher/index.html tools/web-flasher/flasher.js tools/web-flasher/flasher-core.js site/flash/
           tag="$(gh release view --json tagName -q .tagName 2>/dev/null || true)"
           if [ -n "$tag" ]; then
-            gh release download "$tag" --pattern 'crosspoint-*.bin' --dir site/flash/firmware
+            # Assets are attached minutes after publishing (Compile Release); until
+            # then the flasher just lists none.
+            gh release download "$tag" --pattern 'crosspoint-*.bin' --dir site/flash/firmware \
+              || echo "no firmware assets on $tag yet"
           fi
           python3 tools/web-flasher/build_manifest.py site/flash/firmware "$tag"
 

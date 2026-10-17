@@ -75,7 +75,7 @@
       <li>Click <b>Connect</b> and pick the device (often "USB JTAG/serial debug unit").</li>
     </ol>
     <label><input type="checkbox" id="backup"> Save a full 16 MB backup of the device first
-      (about 3 minutes; keep it for recovery)</label>
+      (a few minutes; keep it for recovery)</label>
     <button id="connect">Connect</button>
     <button id="flash" disabled>Flash</button>
     <button id="disconnect" class="secondary" disabled>Disconnect</button>
@@ -89,7 +89,8 @@
     <p>Some X3/X4 units sold by third-party stores have USB flashing disabled by a one-time fuse
       burned at the factory. No software can undo that, but the device can still be updated
       without USB. First try another cable (many are charge-only), another port, and waking the device.
-      The <b>About</b> screen of this fork's firmware shows <b>USB Flashing: Locked</b> on such units.</p>
+      On this fork's firmware, <b>Settings → System → About</b> shows <b>USB Flashing</b> as <b>Locked…</b> on such
+      units. <b>Secure only</b> means USB works but blocks the reads this page needs, so use the routes below too.</p>
     <details>
       <summary>Device runs the stock Xteink firmware</summary>
       <ol>

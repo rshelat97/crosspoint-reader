@@ -6,6 +6,10 @@ import {
   DEVICE_LABELS,
   PARTITION_TABLE_OFFSET,
   PARTITION_TABLE_SIZE,
+  activeAppPartition,
+  boardForAsset,
+  findBoardTag,
+  findOtadata,
   parseImageHeader,
   parsePartitionTable,
   planFlash,
@@ -20,6 +24,7 @@ const ui = {
 };
 
 let firmware = null;  // { name, bytes }
+let selection = 0;  // bumped per pick, so a slow download can't replace a newer choice
 let manifest = null;
 let transport = null;
 let loader = null;
@@ -72,16 +77,25 @@ async function sha256Hex(bytes) {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-function showFirmware(name, bytes, downloadUrl) {
+function showError(text) {
+  firmware = null;
+  ui.fwInfo.className = "status bad";
+  ui.fwInfo.textContent = text;
+  refreshButtons();
+}
+
+// `expectedBoard`: for a release asset, the board its name promises.
+function showFirmware(name, bytes, downloadUrl, expectedBoard = null) {
   const header = parseImageHeader(bytes);
   if (!header.ok) {
-    firmware = null;
-    ui.fwInfo.className = "status bad";
-    ui.fwInfo.textContent = header.error;
+    showError(header.error);
+  } else if (expectedBoard && header.board !== expectedBoard) {
+    showError(`${name} contains firmware for "${header.board}", not "${expectedBoard}". Not flashing it.`);
   } else {
     firmware = { name, bytes };
     ui.fwInfo.className = "status ok";
-    ui.fwInfo.textContent = `${name}: ${(bytes.length / 1048576).toFixed(2)} MB, built for ${header.chipName}. `;
+    const board = header.board ? ` for the "${header.board}" board` : "";
+    ui.fwInfo.textContent = `${name}: ${(bytes.length / 1048576).toFixed(2)} MB, built${board} (${header.chipName}). `;
     if (downloadUrl) {
       const a = document.createElement("a");
       a.href = downloadUrl;
@@ -94,12 +108,13 @@ function showFirmware(name, bytes, downloadUrl) {
 }
 
 ui.release.addEventListener("change", async () => {
+  const pick = ++selection;
+  firmware = null;
+  refreshButtons();
   ui.localFile.value = "";
   const asset = manifest && manifest.assets.find((a) => a.file === ui.release.value);
   if (!asset) {
-    firmware = null;
     ui.fwInfo.textContent = "";
-    refreshButtons();
     return;
   }
   ui.fwInfo.className = "status";
@@ -107,21 +122,24 @@ ui.release.addEventListener("change", async () => {
   try {
     const url = "firmware/" + asset.file;
     const bytes = new Uint8Array(await (await fetch(url)).arrayBuffer());
-    if ((await sha256Hex(bytes)) !== asset.sha256) throw new Error("checksum mismatch");
-    showFirmware(asset.file, bytes, url);
+    const sha = await sha256Hex(bytes);
+    if (pick !== selection) return;
+    if (sha !== asset.sha256) throw new Error("checksum mismatch");
+    showFirmware(asset.file, bytes, url, boardForAsset(asset.device));
   } catch (e) {
-    firmware = null;
-    ui.fwInfo.className = "status bad";
-    ui.fwInfo.textContent = `Download failed (${e.message}). Try again.`;
-    refreshButtons();
+    if (pick === selection) showError(`Download failed (${e.message}). Try again.`);
   }
 });
 
 ui.localFile.addEventListener("change", async () => {
+  const pick = ++selection;
+  firmware = null;
+  refreshButtons();
   const file = ui.localFile.files[0];
   if (!file) return;
   ui.release.value = "";
-  showFirmware(file.name, new Uint8Array(await file.arrayBuffer()), null);
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  if (pick === selection) showFirmware(file.name, bytes, null);
 });
 
 // --- device -------------------------------------------------------------------
@@ -187,20 +205,54 @@ function saveFile(bytes, name) {
   setTimeout(() => URL.revokeObjectURL(url), 10000);
 }
 
+// Board tag of the firmware the device boots now, read in chunks until the tag
+// or the blank end of the image. null for stock or non-CrossPoint firmware.
+async function readDeviceBoard(partitions) {
+  const otadata = findOtadata(partitions);
+  const slot = otadata && activeAppPartition(await loader.readFlash(otadata.offset, otadata.size), partitions);
+  if (!slot) return null;
+  const CHUNK = 0x40000;
+  let tail = new Uint8Array(0);  // overlap so a tag split across chunks is still found
+  for (let off = 0; off < slot.size; off += CHUNK) {
+    setProgress(off, slot.size);
+    const chunk = await loader.readFlash(slot.offset + off, Math.min(CHUNK, slot.size - off));
+    const buf = new Uint8Array(tail.length + chunk.length);
+    buf.set(tail);
+    buf.set(chunk, tail.length);
+    const board = findBoardTag(buf);
+    if (board) return board;
+    if (chunk.every((b) => b === 0xff)) return null;
+    tail = chunk.subarray(chunk.length - 64);
+  }
+  return null;
+}
+
+// Full flash backup. Refuses rather than saving a partial image.
+async function backup() {
+  const sizeName = loader.DETECTED_FLASH_SIZES[(await loader.readFlashId()) >> 16 & 0xff];
+  const size = parseInt(sizeName, 10) * 1048576;
+  if (!sizeName || !sizeName.endsWith("MB") || !Number.isFinite(size)) {
+    throw new Error("Couldn't detect the flash size, so the backup can't be trusted. Nothing was written.");
+  }
+  setState(`Backing up ${sizeName}… keep the device connected.`);
+  const image = await loader.readFlash(0, size, (_pkt, done, total) => setProgress(done, total));
+  if (image.length !== size) throw new Error(`Backup came back short (${image.length} of ${size} bytes). Nothing was written.`);
+  saveFile(image, `xteink-backup-${new Date().toISOString().slice(0, 10)}.bin`);
+  log(`Backup saved (${size} bytes).`);
+}
+
 ui.flash.addEventListener("click", () =>
   withBusy(async () => {
+    const fw = firmware;
     setState("Reading partition table…");
-    const table = await loader.readFlash(PARTITION_TABLE_OFFSET, PARTITION_TABLE_SIZE);
-    const plan = planFlash({ image: firmware.bytes, connectedChip: loader.chip.CHIP_NAME, partitions: parsePartitionTable(table) });
+    const partitions = parsePartitionTable(await loader.readFlash(PARTITION_TABLE_OFFSET, PARTITION_TABLE_SIZE));
+    setState("Checking which board this device is…");
+    const deviceBoard = await readDeviceBoard(partitions);
+    log(deviceBoard ? `Device runs CrossPoint for "${deviceBoard}".` : "Device firmware has no CrossPoint board tag (stock firmware?).");
+    const plan = planFlash({ image: fw.bytes, connectedChip: loader.chip.CHIP_NAME, partitions, deviceBoard });
     if (!plan.ok) throw new Error(plan.error);
 
-    if (ui.backup.checked) {
-      const size = parseInt(await loader.detectFlashSize(), 10) * 1048576;
-      setState(`Backing up ${size / 1048576} MB… keep the device connected.`);
-      const image = await loader.readFlash(0, size, (_pkt, done, total) => setProgress(done, total));
-      saveFile(image, `xteink-backup-${new Date().toISOString().slice(0, 10)}.bin`);
-      log("Backup saved.");
-    }
+    if (ui.backup.checked) await backup();
 
     for (const w of plan.writes) log("Write: " + w.what);
     setState("Flashing… don't unplug the device.");
