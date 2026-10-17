@@ -110,7 +110,11 @@ Key design points:
   browser headers) are needed. Semaphores are depth counters.
 - **Display semantics match the panel**: 1-bpp frames present as B/W; 2-bpp
   grayscale overlay planes composite over the B/W base like the SSD1677
-  waveforms (value 0 = untouched, 1–2 light gray, 3 dark gray).
+  waveforms (value 0 = untouched, 1–2 light gray, 3 dark gray). Absolute
+  planes replace every pixel (0 black .. 3 white, no base frame), and 16-level
+  pages run the two-pass model from `docs/comics-gray16.md`: a coarse pass
+  from white, then a fine pass, ending at brightness × 17. Set
+  `CROSSPOINT_SIM_NO_GRAY16=1` to force the 4-level fallback.
 - **Input contract mirrors `InputManager`**: frame-scoped pressed/released
   edges, tap slop, swipe thresholds and hold timing are recomputed per
   `update()` just like the freeink SDK, and touch coordinates are fed

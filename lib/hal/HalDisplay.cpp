@@ -154,6 +154,21 @@ bool HalDisplay::supportsStripGrayscale() const { return grayscaleCapabilities()
 
 bool HalDisplay::combinesGrayscaleBase() const { return grayscaleCapabilities().base == GrayscaleBase::Combined; }
 
+// Phase 1: no 16-level waveforms on the device yet, so callers take the
+// 4-level Overlay path and the pass entry points stay unreachable. Phase 3 maps
+// each pass to einkDisplay.displayGrayBuffer(turnOff, lut, /*factoryMode=*/true)
+// with a coarse or fine LUT (FreeInkDisplay.h; Ssd1677Driver::displayGray),
+// the coarse LUT starting from white.
+bool HalDisplay::supportsGray16() const { return false; }
+
+bool HalDisplay::beginGray16() { return false; }
+
+void HalDisplay::displayGray16Pass(uint8_t) {}
+
+void HalDisplay::endGray16(const uint8_t* bwBaseline) {
+  if (bwBaseline) cleanupGrayscaleBuffers(bwBaseline);
+}
+
 uint16_t HalDisplay::getDisplayWidth() const { return einkDisplay.getDisplayWidth(); }
 
 uint16_t HalDisplay::getDisplayHeight() const { return einkDisplay.getDisplayHeight(); }
