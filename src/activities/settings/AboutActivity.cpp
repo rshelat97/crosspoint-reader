@@ -5,6 +5,8 @@
 #include <HalClock.h>
 #include <HalFrontlight.h>
 #include <HalTiltSensor.h>
+#include <esp_efuse.h>
+#include <esp_efuse_table.h>
 #include <esp_mac.h>
 
 #include <cstdio>
@@ -27,14 +29,16 @@ enum MenuItem {
   ITEM_RTC,
   ITEM_IMU,
   ITEM_MAC,
+  ITEM_USB_FLASHING,
 };
 
 // Deliberately hardcoded English, exempt from the tr() rule: support reads
 // these screenshots across every device language, so the labels must be
 // identical on every unit.
 const char* const menuNames[AboutActivity::ITEM_COUNT] = {
-    "Device", "Firmware",          "Chip",        "Flash", "Display Controller", "Resolution", "Touch", "Frontlight",
-    "RTC",    "Tilt Sensor (IMU)", "MAC Address",
+    "Device",      "Firmware",     "Chip",       "Flash", "Display Controller",
+    "Resolution",  "Touch",        "Frontlight", "RTC",   "Tilt Sensor (IMU)",
+    "MAC Address", "USB Flashing",
 };
 
 // Chip part numbers, not user prose — deliberately untranslated.
@@ -77,6 +81,20 @@ const char* touchControllerName(const BoardConfig::TouchController c) {
   }
   return nullptr;
 }
+
+// Factory-burned eFuses that block flashing over USB (some third-party X3/X4
+// units). Burning is irreversible; this only reports which lock is set.
+const char* usbFlashingState() {
+#if CONFIG_IDF_TARGET_ESP32
+  return "Unknown";  // classic ESP32 has no USB Serial/JTAG fuses
+#else
+  if (esp_efuse_read_field_bit(ESP_EFUSE_DIS_DOWNLOAD_MODE)) return "Locked (all)";
+  if (esp_efuse_read_field_bit(ESP_EFUSE_DIS_USB_SERIAL_JTAG)) return "Locked (USB off)";
+  if (esp_efuse_read_field_bit(ESP_EFUSE_DIS_USB_SERIAL_JTAG_DOWNLOAD_MODE)) return "Locked";
+  if (esp_efuse_read_field_bit(ESP_EFUSE_ENABLE_SECURITY_DOWNLOAD)) return "Secure only";
+  return "Unlocked";
+#endif
+}
 }  // namespace
 
 AboutActivity::AboutActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
@@ -115,6 +133,7 @@ void AboutActivity::onEnter() {
   esp_read_mac(mac, ESP_MAC_WIFI_STA);
   snprintf(buf, sizeof(buf), "%02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
   rowValues_[ITEM_MAC] = buf;
+  rowValues_[ITEM_USB_FLASHING] = usbFlashingState();
 }
 
 void AboutActivity::buildScreen(UiScreen& screen) {

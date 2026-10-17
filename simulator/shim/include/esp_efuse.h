@@ -1,5 +1,6 @@
 #pragma once
-// Simulator shim: efuse reads report a fixed simulator serial number.
+// Simulator shim: efuse reads report a fixed simulator serial number and an
+// unlocked part (no bit fuses burned).
 #include <cstring>
 
 #include "esp_err.h"
@@ -15,3 +16,5 @@ inline esp_err_t esp_efuse_read_field_blob(const esp_efuse_desc_t* const*, void*
   strncpy(static_cast<char*>(dst), serial, bytes > 0 ? bytes - 1 : 0);
   return ESP_OK;
 }
+
+inline bool esp_efuse_read_field_bit(const esp_efuse_desc_t* const*) { return false; }
