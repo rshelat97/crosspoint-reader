@@ -568,3 +568,11 @@ Book moves rename the store and its `.deleted` journal (plus recovery sidecars)
 together. The stored source path is informational and is refreshed on the next
 save; the current file path selects the store. Local book deletion cleans up all
 of these sidecars but preserves the independent `My Clippings.txt` export.
+
+## Comics page planes (`/.crosspoint/cbz_<hash>/`)
+
+The CBZ reader caches each page as four 1-bit planes in panel layout
+(`pages/NNNN.g16`, 192 KB per page) next to the usual cover and thumbnail
+BMPs, and keeps the current page and page count in `progress.bin` (two
+little-endian `uint32_t`). The `.g16` header and tile layout are specified in
+[comics-gray16.md](comics-gray16.md#plane-file-format-g16-version-1).

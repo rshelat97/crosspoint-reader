@@ -62,6 +62,9 @@ jobs:
             --key 1:60:64 --key 1:150:154 --key 1:250:254 \
             --key 5:500:504 --key 5:650:654 --key 5:800:804 --key 5:950:954
 
+      - name: Comics smoke (16-level planes and the 4-level fallback)
+        run: simulator/tests/cbz_smoke.sh build/sim-native/crosspoint_sim
+
       - name: File Transfer smoke (hotspot mode + real web server endpoints)
         run: |
           set -euo pipefail

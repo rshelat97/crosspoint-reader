@@ -59,8 +59,8 @@ CROSSPOINT_SIM_FS=./simfs ./build/sim-native/crosspoint_sim \
 ```
 
 The simulated SD card is a host directory (`$CROSSPOINT_SIM_FS`, default
-`./simfs`). Drop EPUBs into `simfs/books/` and they appear in the file
-browser; the `.crosspoint` cache is created there too, exactly as on device.
+`./simfs`). Drop EPUBs (or `.txt`, `.xtc`, `.cbz` files) into `simfs/books/`
+and they appear in the file browser; the `.crosspoint` cache is created there too, exactly as on device.
 
 Sandboxed/offline configure: add `-DSIM_FETCH_JPEGDEC=OFF
 -DSIM_FETCH_ARDUINOJSON=OFF` to skip the FetchContent downloads and fall back
@@ -114,7 +114,8 @@ Key design points:
   planes replace every pixel (0 black .. 3 white, no base frame), and 16-level
   pages run the two-pass model from `docs/comics-gray16.md`: a coarse pass
   from white, then a fine pass, ending at brightness × 17. Set
-  `CROSSPOINT_SIM_NO_GRAY16=1` to force the 4-level fallback.
+  `CROSSPOINT_SIM_NO_GRAY16=1` (native build only) to force the 4-level
+  fallback the device uses today.
 - **Input contract mirrors `InputManager`**: frame-scoped pressed/released
   edges, tap slop, swipe thresholds and hold timing are recomputed per
   `update()` just like the freeink SDK, and touch coordinates are fed

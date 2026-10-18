@@ -134,7 +134,7 @@ Notes:
 
 - Existing files with the same name are overwritten.
 - EPUB cache data for the uploaded path is cleared after a successful upload.
-- Uploading a book file (`.epub`, `.txt`, `.md`, `.xtc`), here or through the
+- Uploading a book file (`.epub`, `.txt`, `.md`, `.xtc`, `.cbz`), here or through the
   WebSocket upload, marks the Library index stale, so the book appears the next
   time the Library opens. Hidden files and folders (names that start with `.`)
   don't mark it.
@@ -600,7 +600,7 @@ browser. Body: `{"plugin":"<name>","url":"...","dest":"/abs/path","headers":{...
 - `dest` must be absolute with no `..`; missing parent folders are created.
 - The transfer is staged in `<dest>.part` and replaces `dest` only when the
   whole body has arrived, so a failed update keeps the previous file.
-- Installing a book file (`.epub`, `.txt`, `.md`, `.xtc`) marks the Library
+- Installing a book file (`.epub`, `.txt`, `.md`, `.xtc`, `.cbz`) marks the Library
   index stale, so the book appears the next time the Library opens. Requests
   that end with `complete:false`, failed transfers, other file types, and
   hidden files or folders (names that start with `.`) don't mark it.

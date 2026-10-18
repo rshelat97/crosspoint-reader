@@ -18,7 +18,7 @@ Check [our Devices page](https://crosspointreader.com/devices) for the full list
 
 - **Reader engine**: EPUB 2/3 rendering with embedded-style option, image handling, hyphenation, kerning, adaptive table layouts, native CJK ruby annotations, chapter navigation, footnotes, bookmarks, dictionary lookups ([StarDict](docs/dictionary.md)), go-to-percent, auto page turn, orientation control, focus reading, KOReader progress sync and more.
 
-- **Various formats**: native handling for `.epub`, `.xtc/.xtch`, `.txt`, and `.bmp`.
+- **Various formats**: native handling for `.epub`, `.xtc/.xtch`, `.txt`, `.bmp`, and `.cbz` comics (fork feature: 4-level gray on the device today, 16-level in the simulator; see [docs/comics-gray16.md](docs/comics-gray16.md)).
 
 - **Touch reading**: follow EPUB links and look up words in the dictionary on touch-enabled devices.
 

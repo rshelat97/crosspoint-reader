@@ -81,7 +81,8 @@ bool fitImage(uint16_t srcW, uint16_t srcH, PageSpec* spec);
 void encodeHeader(const PageSpec& spec, uint8_t out[HEADER_SIZE]);
 bool decodeHeader(const uint8_t in[HEADER_SIZE], PageSpec* spec);
 
-// I/O callbacks (function pointer + context, not std::function: see CLAUDE.md).
+// I/O callbacks: a function pointer plus context rather than std::function,
+// which costs heap and flash on this hot path (.agents/rules/coding-standards.md).
 using WriteFn = bool (*)(void* ctx, const uint8_t* data, size_t len);
 using ReadAtFn = bool (*)(void* ctx, uint32_t offset, uint8_t* dst, size_t len);
 

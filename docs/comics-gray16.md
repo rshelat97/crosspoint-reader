@@ -25,13 +25,18 @@ page image (JPEG/PNG inside the .cbz)
   -> cached as pages/NNNN.g16              (192 KB per page)
 
 display: for each pass (coarse, fine): load two planes into the framebuffer
-         (Gray16Reader), draw the status bar, upload as LSB/MSB, run the pass
+         (Gray16Reader), draw the status bar, upload as LSB/MSB, run the pass;
+         then load plane 3 once more as the B/W baseline for endGray16
 ```
 
 A full 4-bit page is 192 KB and does not fit in the X4's RAM, so planes are
 cached on the SD card and streamed one at a time through the shared 48 KB
 framebuffer. The writer holds one band of all four planes (15 KB in portrait,
-25.6 KB in landscape); the reader holds one tile (3.8 KB or 6.4 KB).
+25.6 KB in landscape); the reader holds one tile (6.4 KB, allocated for the
+activity's lifetime). The 4-level fallback also needs a second 48 KB plane
+buffer; it is allocated per render, after the page has been decoded and
+cached, and freed right after the refresh, so it never competes with the
+decoder for RAM.
 
 ## Brightness and bit conventions
 
@@ -100,32 +105,70 @@ the page is regenerated.
 ```
 bool supportsGray16() const;
 bool beginGray16();                    // false when unsupported -> use the 4-level fallback
-void displayGray16Pass(uint8_t pass);  // 0 = coarse (planes 2,3), 1 = fine (planes 0,1)
+void displayGray16Pass(uint8_t pass, bool turnOffScreen = false);  // 0 = coarse (planes 2,3), 1 = fine (planes 0,1)
 void endGray16(const uint8_t* bwBaseline);
 ```
 
-Sequence: `beginGray16()`; for each pass: `copyGrayscaleLsbBuffers(low plane)`,
+Sequence: `beginGray16()` (no visible effect: it only claims the sequence, and
+returns false where 16 levels are unsupported); for each pass:
+`copyGrayscaleLsbBuffers(low plane)`,
 `copyGrayscaleMsbBuffers(high plane)`, `displayGray16Pass(pass)`; then
 `endGray16(bw)` with a B/W approximation of the page (plane 3), which restores
 the controller's differential baseline so the next ordinary refresh is clean.
 
-Device (phase 3): each pass maps to `EInkDisplay::displayGrayBuffer(turnOff,
-lut, /*factoryMode=*/true)` with a coarse or fine LUT; the coarse LUT must start
-from white (it is the first thing drawn on the page). Until then the device HAL
-returns `false` from `beginGray16()`.
+Activities go through the `GfxRenderer` wrappers (`supportsGray16`,
+`beginGray16`, `displayGray16Pass`, `endGray16`), which pass the fading-fix
+setting like the existing grayscale uploads do; they never call `HalDisplay`
+directly. `endGray16` owns the cleanup of the grayscale buffers, so the
+16-level path does not call `cleanupGrayscaleWithFrameBuffer`.
+
+Device (phase 3): each pass is one SDK grayscale refresh with a coarse or fine
+LUT. Both LUTs must be absolute: they drive every pixel class to its target
+from whatever ink the previous page left, like the SDK's existing Absolute
+4-level pass, so no white flush is needed and a page costs exactly two
+refreshes. Facts to design against, from the pinned SDK
+(`freeink-sdk/libs/display/FreeInkDisplay/src/`):
+
+- `FreeInkDisplay::displayGrayBuffer(turnOffScreen, lut, factoryMode)` is the
+  facade entry that runs a custom LUT. In Absolute mode it cancels the pass
+  when `lut != nullptr` (`FreeInkDisplay.cpp`, around line 880) and otherwise
+  runs the driver with its own LUT, so custom coarse/fine LUTs need either
+  the Overlay-mode factory path with a HAL-side plane complement, or an SDK
+  extension. There is no direct driver route: the facade keeps `_driver`
+  private.
+- Only in Absolute mode does `Ssd1677Driver::writeGrayRam` complement each
+  host plane (`Ssd1677Driver.cpp`, around line 783); on the Overlay-mode path
+  the HAL must complement them itself. The plane bits in this document are
+  host-side values either way.
+- A factory-mode pass sets the driver's `_needsGrayClear` flag
+  (`Ssd1677Driver.cpp`, around line 847): the next Fast refresh is promoted
+  to a Half/Full clean, because restoring RAM alone cannot restore the B/W
+  ink state. `endGray16(bw)` re-uploads the B/W baseline so that clean starts
+  from the right previous image.
+
+Until phase 3 lands the device HAL returns `false` from `beginGray16()`.
 
 ## CBZ reader
 
 - A `.cbz` is a ZIP of page images. Entries are filtered to `.jpg`, `.jpeg`,
-  `.png`, skipping directories, `__MACOSX/`, and names starting with `.`; the
+  `.png`, skipping directories, anything under `__MACOSX/`, and entries whose
+  base name starts with `.` (macOS `._` resource forks and the like); the
   remaining names are sorted naturally (`2.jpg` before `10.jpg`), compared
-  case-insensitively.
+  case-insensitively. Entries with other extensions are not pages and are
+  ignored.
 - Cache: `/.crosspoint/cbz_<hash>/` with `pages/NNNN.g16`, cover BMPs named
   like the EPUB ones (`cover_legacy_v2.bmp`, `_crop`, `cover_original...`;
   2-bit, sleep screen), `thumb_<height>.bmp` (1-bit, home screen) and
-  `progress.bin` (current page), following the XTC reader's conventions. A
-  page file is written as `NNNN.g16.tmp` and renamed into place, so a power
-  loss cannot leave a truncated page behind.
+  `progress.bin`, named like the XTC reader's files. `progress.bin`
+  holds the current page and the page count as two little-endian `uint32_t`
+  (a 4-byte file from earlier fork builds is still read; the home screen then
+  counts the pages by opening the ZIP). A page file is written as
+  `NNNN.g16.tmp` and renamed into place, so a power loss cannot leave a
+  truncated page behind. A page file with a stale header (other orientation,
+  panel size or band height) is regenerated when the page is next opened; a
+  file whose body cannot be read is removed, that view shows the page error,
+  and the next view rebuilds it. Pages are never evicted; deleting the book
+  from the file browser removes the whole cache directory.
 - Title is the file name without extension; there is no author.
 - First view of a page decodes it (a "Loading" popup is shown) and caches the
   planes; later views only stream the planes. The decoder scales the image to
@@ -133,18 +176,30 @@ returns `false` from `beginGray16()`.
   centred as decoded (clamped to the page, never re-scaled), with white around
   it. The reader follows the orientation setting like the other readers; a
   cached page whose orientation differs is regenerated.
-- The status bar follows the XTC status-bar setting (top/bottom/hidden) and is
+- The status bar follows the XTC status-bar setting (shown as "XTC Status
+  Bar" in Settings: top/bottom/hidden; no new setting is added) and is
   drawn into every plane as a white box with black text so it reads as pure
   black and white in the final image; the 4-level fallback clears its area
   from the overlay masks.
-- Images that cannot be decoded (other formats, corrupt files) show a page
-  error; the rest of the book stays readable.
+- A `.jpg`/`.jpeg`/`.png` entry that cannot be decoded (corrupt or mislabelled
+  file, unsupported JPEG variant) shows a page error; the rest of the book
+  stays readable.
 
 ## Costs and limits
 
-- Cache: 192 KB per page. A 200-page volume uses about 38 MB of SD space.
-- First view: JPEG decode plus two SD passes, roughly 2-3 s on the X4 (to be
-  measured). Later views: four 48 KB reads plus the refreshes.
+- Cache: 192 KB per page, never evicted while the book exists. A 200-page
+  volume uses about 38 MB of SD space.
+- First view: extract the entry, decode it to an 8-bit gray BMP in the cache
+  directory, then read that BMP back row by row, dither and write the planes:
+  three SD passes over the page plus the decode. Not measured yet; a large
+  scan (a 2000 px wide JPEG) is expected to take 5-12 s on the X4. Candidates
+  for phase 2 if that is too slow: stream the decoder's rows straight into the
+  dither through a `Print` adapter (saves the BMP round trip), use JPEGDEC's
+  1/2..1/8 scaling for oversized pages, and decode stored (uncompressed) ZIP
+  entries in place instead of extracting them.
+- Later views, 16-level: five 48 KB reads (four planes, then plane 3 again as
+  the B/W baseline) plus two refreshes. 4-level fallback: two plane reads
+  (planes 3 and 2), one B/W base refresh and one grayscale refresh.
 - Display time on the device is two absolute passes; expected ~1 s per page
   once phase 3 lands (to be measured).
 - Images are scaled by the existing converters' nearest/linear scaling; no
@@ -156,8 +211,16 @@ returns `false` from `beginGray16()`.
   small synthetic panel for all four orientations, letterbox padding, header
   validation.
 - `test/cbz`: entry filtering and natural sort, page enumeration from a
-  synthetic ZIP.
-- Simulator: open a fixture `.cbz` with a 16-step gradient page, check the
-  presented frame holds exactly the 16 luminances `g * 17`, letterboxing and
-  page turns (native and browser builds); the 4-level fallback by setting
-  `CROSSPOINT_SIM_NO_GRAY16=1`.
+  synthetic ZIP, cache validation and regeneration of stale page files,
+  progress percentage from a page index and count.
+- `test/sim_display`: the simulator's absolute-plane and two-pass luminance
+  model (`g * 17`).
+- `simulator/tests/cbz_smoke.sh` (run by the `native-smoke` CI job): builds
+  a fixture `.cbz` with `cbz_fixture.py` (16-step gradient, a small page that
+  gets letterboxed, real JPEG/PNG pages and junk entries), opens it in the
+  native simulator and checks that the presented frame holds exactly the 16
+  luminances `g * 17`, the letterbox, the page order and, with
+  `CROSSPOINT_SIM_NO_GRAY16=1` (native build only), the 4-level fallback
+  mapping `[0, 85, 170, 255]`. The browser build is compile-only in CI; the
+  browser path was checked by hand with a Playwright script during
+  development (not in the repository).
