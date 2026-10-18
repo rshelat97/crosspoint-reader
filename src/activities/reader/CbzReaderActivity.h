@@ -16,15 +16,16 @@ class CbzReaderActivity final : public ReaderActivity {
   std::unique_ptr<Cbz> cbz;
   uint32_t currentPage = 0;
   uint32_t savedPage = UINT32_MAX;  // page held by progress.bin
-  // Allocated once in onEnter(): one plane tile for the Gray16 reader and, on
-  // panels without 16-level support, a panel-sized plane for the overlay masks.
+  // Allocated once in onEnter(): one plane tile for the Gray16 reader. The
+  // 4-level fallback allocates its panel-sized plane per render.
   std::unique_ptr<uint8_t[]> tileScratch;
   size_t tileScratchLen = 0;
-  std::unique_ptr<uint8_t[]> planeScratch;
+
+  enum class PageRender : uint8_t { Ok, LoadError, MemoryError };
 
   void renderPage();
-  bool renderGray16(uint8_t* framebuffer);
-  bool renderGray4(uint8_t* framebuffer);
+  PageRender renderGray16(uint8_t* framebuffer);
+  PageRender renderGray4(uint8_t* framebuffer);
   bool loadPlaneWithStatusBar(uint8_t plane, uint8_t* framebuffer) const;
   void renderErrorPage(const char* message) const;
   bool statusBarLayout(int* clearY, int* clearHeight, int* paddingBottom) const;

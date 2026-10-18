@@ -315,7 +315,7 @@ TEST_F(CbzTest, EnsurePagePlanesWritesAndReloadsPlanes) {
   std::vector<uint8_t> framebuffer(PANEL_W * PANEL_H / 8, 0xAA);
   std::vector<uint8_t> scratch(spec.maxTileBytes());
   for (uint8_t k = 0; k < gray16::PLANE_COUNT; k++) {
-    ASSERT_TRUE(cbz.loadPlane(1, k, framebuffer.data(), scratch.data(), scratch.size()));
+    ASSERT_TRUE(cbz.loadPlane(1, k, PANEL_W, PANEL_H, framebuffer.data(), scratch.data(), scratch.size()));
     for (int y = 0; y < 32; y++) {
       const int level = stripeLum(y) / 17;
       for (int x = 0; x < 16; x++) {
@@ -354,7 +354,7 @@ TEST_F(CbzTest, SmallerImageIsCentredWithWhiteAround) {
   std::vector<uint8_t> framebuffer(PANEL_W * PANEL_H / 8, 0);
   std::vector<uint8_t> scratch(spec.maxTileBytes());
   for (uint8_t k = 0; k < gray16::PLANE_COUNT; k++) {
-    ASSERT_TRUE(cbz.loadPlane(0, k, framebuffer.data(), scratch.data(), scratch.size()));
+    ASSERT_TRUE(cbz.loadPlane(0, k, PANEL_W, PANEL_H, framebuffer.data(), scratch.data(), scratch.size()));
     for (int y = 0; y < 32; y++) {
       for (int x = 0; x < 16; x++) {
         const bool inside = x >= 4 && x < 12 && y >= 12 && y < 20;
@@ -380,7 +380,7 @@ TEST_F(CbzTest, OversizedBmpIsClampedToThePage) {
   EXPECT_EQ(spec.imageHeight, 32);
   std::vector<uint8_t> framebuffer(PANEL_W * PANEL_H / 8, 0);
   std::vector<uint8_t> scratch(spec.maxTileBytes());
-  ASSERT_TRUE(cbz.loadPlane(0, 3, framebuffer.data(), scratch.data(), scratch.size()));
+  ASSERT_TRUE(cbz.loadPlane(0, 3, PANEL_W, PANEL_H, framebuffer.data(), scratch.data(), scratch.size()));
   EXPECT_TRUE(planeBit(framebuffer, gray16::Portrait, 0, 0));   // level 15
   EXPECT_FALSE(planeBit(framebuffer, gray16::Portrait, 0, 1));  // level 0
 }
@@ -395,15 +395,91 @@ TEST_F(CbzTest, EnsurePagePlanesFailureLeavesNoFiles) {
   EXPECT_FALSE(cbz.ensurePagePlanes(99, gray16::Portrait, PANEL_W, PANEL_H));
 }
 
+TEST_F(CbzTest, LoadPlaneRejectsAnotherPanelSize) {
+  Cbz cbz = loadSample();
+  converterStub::rowLum = stripeLum;
+  ASSERT_TRUE(cbz.ensurePagePlanes(0, gray16::Portrait, PANEL_W, PANEL_H));
+  std::vector<uint8_t> framebuffer(PANEL_W * PANEL_H / 8, 0);
+  std::vector<uint8_t> scratch(256);
+  EXPECT_FALSE(cbz.loadPlane(0, 3, PANEL_W * 2, PANEL_H, framebuffer.data(), scratch.data(), scratch.size()));
+  // A header for another panel is refused but the file stays usable there.
+  EXPECT_NE(Storage.fileBytes(cbz.getPagePlanesPath(0)), nullptr);
+  EXPECT_TRUE(cbz.loadPlane(0, 3, PANEL_W, PANEL_H, framebuffer.data(), scratch.data(), scratch.size()));
+}
+
+TEST_F(CbzTest, TruncatedPlaneFileIsRebuiltOnTheNextView) {
+  Cbz cbz = loadSample();
+  converterStub::rowLum = stripeLum;
+  ASSERT_TRUE(cbz.ensurePagePlanes(0, gray16::Portrait, PANEL_W, PANEL_H));
+  const std::string path = cbz.getPagePlanesPath(0);
+  const std::vector<uint8_t>* full = Storage.fileBytes(path);
+  ASSERT_NE(full, nullptr);
+  // Keep the valid header and a few body bytes, as a power loss mid-write would.
+  Storage.setFile(path, std::vector<uint8_t>(full->begin(), full->begin() + gray16::HEADER_SIZE + 3));
+  EXPECT_TRUE(cbz.hasPagePlanes(0, gray16::Portrait, PANEL_W, PANEL_H));
+
+  std::vector<uint8_t> framebuffer(PANEL_W * PANEL_H / 8, 0);
+  std::vector<uint8_t> scratch(256);
+  EXPECT_FALSE(cbz.loadPlane(0, 0, PANEL_W, PANEL_H, framebuffer.data(), scratch.data(), scratch.size()));
+  EXPECT_EQ(Storage.fileBytes(path), nullptr);
+  EXPECT_FALSE(cbz.hasPagePlanes(0, gray16::Portrait, PANEL_W, PANEL_H));
+
+  EXPECT_EQ(converterStub::calls, 1);
+  ASSERT_TRUE(cbz.ensurePagePlanes(0, gray16::Portrait, PANEL_W, PANEL_H));
+  EXPECT_EQ(converterStub::calls, 2);
+  EXPECT_TRUE(cbz.loadPlane(0, 0, PANEL_W, PANEL_H, framebuffer.data(), scratch.data(), scratch.size()));
+}
+
+TEST_F(CbzTest, LoadPlaneWithShortScratchKeepsTheFile) {
+  Cbz cbz = loadSample();
+  converterStub::rowLum = stripeLum;
+  ASSERT_TRUE(cbz.ensurePagePlanes(0, gray16::Portrait, PANEL_W, PANEL_H));
+  gray16::PageSpec spec;
+  ASSERT_TRUE(cbz.readPageSpec(0, &spec));
+  std::vector<uint8_t> framebuffer(PANEL_W * PANEL_H / 8, 0);
+  std::vector<uint8_t> scratch(spec.maxTileBytes() - 1);
+  // A caller error must not cost the cached page.
+  EXPECT_FALSE(cbz.loadPlane(0, 0, PANEL_W, PANEL_H, framebuffer.data(), scratch.data(), scratch.size()));
+  EXPECT_NE(Storage.fileBytes(cbz.getPagePlanesPath(0)), nullptr);
+  EXPECT_FALSE(cbz.loadPlane(0, 0, PANEL_W, PANEL_H, nullptr, scratch.data(), scratch.size()));
+  EXPECT_NE(Storage.fileBytes(cbz.getPagePlanesPath(0)), nullptr);
+}
+
+TEST_F(CbzTest, HasPagePlanesRequiresTheDefaultBandHeight) {
+  Cbz cbz = loadSample();
+  // A valid header baked with another band height is not accepted as cached.
+  gray16::PageSpec spec;
+  spec.orientation = gray16::Portrait;
+  spec.panelWidth = PANEL_W;
+  spec.panelHeight = PANEL_H;
+  spec.bandRows = 8;
+  gray16::PageSpec::logicalSize(spec.orientation, PANEL_W, PANEL_H, &spec.pageWidth, &spec.pageHeight);
+  ASSERT_TRUE(spec.valid());
+  std::vector<uint8_t> header(gray16::HEADER_SIZE);
+  gray16::encodeHeader(spec, header.data());
+  Storage.setFile(cbz.getPagePlanesPath(0), header);
+  gray16::PageSpec stored;
+  EXPECT_TRUE(cbz.readPageSpec(0, &stored));
+  EXPECT_EQ(stored.bandRows, 8);
+  EXPECT_FALSE(cbz.hasPagePlanes(0, gray16::Portrait, PANEL_W, PANEL_H));
+}
+
+TEST(CbzProgress, PercentFromPageAndCount) {
+  EXPECT_EQ(Cbz::calculateProgress(0, 4), 25);
+  EXPECT_EQ(Cbz::calculateProgress(3, 4), 100);
+  EXPECT_EQ(Cbz::calculateProgress(4, 4), 100);  // end-of-book marker
+  EXPECT_EQ(Cbz::calculateProgress(0, 0), 0);
+}
+
 TEST_F(CbzTest, LoadPlaneRejectsMissingOrInvalidInput) {
   Cbz cbz = loadSample();
   std::vector<uint8_t> framebuffer(PANEL_W * PANEL_H / 8, 0);
   std::vector<uint8_t> scratch(64);
-  EXPECT_FALSE(cbz.loadPlane(0, 0, framebuffer.data(), scratch.data(), scratch.size()));
+  EXPECT_FALSE(cbz.loadPlane(0, 0, PANEL_W, PANEL_H, framebuffer.data(), scratch.data(), scratch.size()));
   converterStub::rowLum = stripeLum;
   ASSERT_TRUE(cbz.ensurePagePlanes(0, gray16::Portrait, PANEL_W, PANEL_H));
-  EXPECT_FALSE(cbz.loadPlane(0, 4, framebuffer.data(), scratch.data(), scratch.size()));
-  EXPECT_FALSE(cbz.loadPlane(9, 0, framebuffer.data(), scratch.data(), scratch.size()));
+  EXPECT_FALSE(cbz.loadPlane(0, 4, PANEL_W, PANEL_H, framebuffer.data(), scratch.data(), scratch.size()));
+  EXPECT_FALSE(cbz.loadPlane(9, 0, PANEL_W, PANEL_H, framebuffer.data(), scratch.data(), scratch.size()));
 }
 
 TEST(BitmapLum, ReadsPaletteLuminanceFromGray8Bmp) {

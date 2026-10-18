@@ -1,17 +1,23 @@
 #include "CbzReaderActivity.h"
 
 #include <GfxRenderer.h>
-#include <HalDisplay.h>
 #include <HalStorage.h>
 #include <I18n.h>
 #include <Memory.h>
 
 #include <algorithm>
+#include <cstring>
 
 #include "CrossPointSettings.h"
 #include "ProgressFile.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+
+// Plane files bake the renderer's orientation value; gray16 mirrors the enum.
+static_assert(gray16::Portrait == static_cast<uint8_t>(GfxRenderer::Portrait));
+static_assert(gray16::LandscapeClockwise == static_cast<uint8_t>(GfxRenderer::LandscapeClockwise));
+static_assert(gray16::PortraitInverted == static_cast<uint8_t>(GfxRenderer::PortraitInverted));
+static_assert(gray16::LandscapeCounterClockwise == static_cast<uint8_t>(GfxRenderer::LandscapeCounterClockwise));
 
 bool CbzReaderActivity::loadBook() {
   auto loaded = makeUniqueNoThrow<Cbz>(bookPath);
@@ -47,17 +53,9 @@ void CbzReaderActivity::onEnter() {
   }
   tileScratch = makeUniqueNoThrow<uint8_t[]>(tileScratchLen);
   if (!tileScratch) LOG_ERR("CBR", "OOM: plane tile (%u bytes)", static_cast<unsigned>(tileScratchLen));
-
-  if (!display.supportsGray16()) {
-    // The 4-level overlay needs plane 2 beside the framebuffer's plane 3.
-    const size_t planeBytes = renderer.getBufferSize();
-    planeScratch = makeUniqueNoThrow<uint8_t[]>(planeBytes);
-    if (!planeScratch) LOG_ERR("CBR", "OOM: overlay plane (%u bytes)", static_cast<unsigned>(planeBytes));
-  }
 }
 
 void CbzReaderActivity::onExit() {
-  planeScratch.reset();
   tileScratch.reset();
   tileScratchLen = 0;
   ReaderActivity::onExit();
@@ -113,7 +111,10 @@ void CbzReaderActivity::clearStatusBarMask() const {
 }
 
 bool CbzReaderActivity::loadPlaneWithStatusBar(const uint8_t plane, uint8_t* framebuffer) const {
-  if (!cbz->loadPlane(currentPage, plane, framebuffer, tileScratch.get(), tileScratchLen)) return false;
+  if (!cbz->loadPlane(currentPage, plane, renderer.getDisplayWidth(), renderer.getDisplayHeight(), framebuffer,
+                      tileScratch.get(), tileScratchLen)) {
+    return false;
+  }
   renderStatusBarOverlay();
   return true;
 }
@@ -142,9 +143,9 @@ void CbzReaderActivity::renderPage() {
   }
 
   uint8_t* framebuffer = renderer.getWriteTarget();
-  const bool rendered = display.beginGray16() ? renderGray16(framebuffer) : renderGray4(framebuffer);
-  if (!rendered) {
-    renderErrorPage(tr(STR_PAGE_LOAD_ERROR));
+  const PageRender result = renderer.beginGray16() ? renderGray16(framebuffer) : renderGray4(framebuffer);
+  if (result != PageRender::Ok) {
+    renderErrorPage(result == PageRender::MemoryError ? tr(STR_MEMORY_ERROR) : tr(STR_PAGE_LOAD_ERROR));
     return;
   }
   LOG_DBG("CBR", "Rendered page %u/%u", static_cast<unsigned>(currentPage + 1),
@@ -153,9 +154,9 @@ void CbzReaderActivity::renderPage() {
 }
 
 // Two absolute passes: coarse (planes 2, 3) then fine (planes 0, 1), each
-// uploaded as LSB/MSB. Called after display.beginGray16() returned true and
+// uploaded as LSB/MSB. Called after renderer.beginGray16() returned true and
 // always ends the sequence, even on a plane read failure.
-bool CbzReaderActivity::renderGray16(uint8_t* framebuffer) {
+CbzReaderActivity::PageRender CbzReaderActivity::renderGray16(uint8_t* framebuffer) {
   bool ok = true;
   for (uint8_t pass = 0; pass < 2 && ok; pass++) {
     const uint8_t low = pass == 0 ? 2 : 0;
@@ -165,26 +166,30 @@ bool CbzReaderActivity::renderGray16(uint8_t* framebuffer) {
     ok = loadPlaneWithStatusBar(low + 1, framebuffer);
     if (!ok) break;
     renderer.copyGrayscaleMsbBuffers();
-    display.displayGray16Pass(pass);
+    renderer.displayGray16Pass(pass);
   }
-  // Leave the framebuffer holding the B/W approximation (plane 3): it is the
-  // controller's differential baseline for the next ordinary refresh.
+  // Leave the framebuffer holding the B/W approximation (plane 3): endGray16()
+  // makes it the controller's differential baseline for the next refresh.
   if (ok) ok = loadPlaneWithStatusBar(3, framebuffer);
   if (!ok) renderer.clearScreen();
-  display.endGray16(framebuffer);
-  renderer.cleanupGrayscaleWithFrameBuffer();
-  return ok;
+  renderer.endGray16();
+  return ok ? PageRender::Ok : PageRender::LoadError;
 }
 
 // 4-level overlay, same sequence as the XTCH reader: base = plane 3, then the
-// masks MSB = plane3 ^ plane2 (dark or light) and LSB = ~plane3 & plane2
-// (dark), computed in place in the framebuffer against plane 2 in the scratch.
-bool CbzReaderActivity::renderGray4(uint8_t* framebuffer) {
-  if (!planeScratch) {
-    LOG_ERR("CBR", "No overlay plane buffer");
-    return false;
+// masks MSB = plane3 ^ plane2 (dark or light) and LSB = MSB & ~plane3 (dark),
+// built in place in the framebuffer against a copy of the base.
+CbzReaderActivity::PageRender CbzReaderActivity::renderGray4(uint8_t* framebuffer) {
+  // The base (plane 3 with the status bar) must survive the mask arithmetic
+  // and come back as the B/W baseline. Allocated per render, after the page
+  // decode has released its buffers, and freed on return.
+  const size_t planeBytes = renderer.getBufferSize();
+  const auto base = makeUniqueNoThrow<uint8_t[]>(planeBytes);
+  if (!base) {
+    LOG_ERR("CBR", "OOM: overlay plane (%u bytes)", static_cast<unsigned>(planeBytes));
+    return PageRender::MemoryError;
   }
-  if (!loadPlaneWithStatusBar(3, framebuffer)) return false;
+  if (!loadPlaneWithStatusBar(3, framebuffer)) return PageRender::LoadError;
 
   if (pagesUntilFullRefresh <= 1) {
     // Periodic ghost cleanup; combined-base panels defer the base so the gray
@@ -201,19 +206,21 @@ bool CbzReaderActivity::renderGray4(uint8_t* framebuffer) {
     pagesUntilFullRefresh--;
   }
 
-  uint8_t* plane2 = planeScratch.get();
-  if (!cbz->loadPlane(currentPage, 2, plane2, tileScratch.get(), tileScratchLen)) return false;
-  const size_t planeBytes = renderer.getBufferSize();
-  for (size_t i = 0; i < planeBytes; i++) framebuffer[i] ^= plane2[i];
+  memcpy(base.get(), framebuffer, planeBytes);
+  if (!cbz->loadPlane(currentPage, 2, renderer.getDisplayWidth(), renderer.getDisplayHeight(), framebuffer,
+                      tileScratch.get(), tileScratchLen)) {
+    return PageRender::LoadError;
+  }
+  for (size_t i = 0; i < planeBytes; i++) framebuffer[i] ^= base[i];
   clearStatusBarMask();
   renderer.copyGrayscaleMsbBuffers();
-  for (size_t i = 0; i < planeBytes; i++) framebuffer[i] &= plane2[i];
+  for (size_t i = 0; i < planeBytes; i++) framebuffer[i] &= static_cast<uint8_t>(~base[i]);
   renderer.copyGrayscaleLsbBuffers();
   renderer.displayGrayBuffer();
 
-  if (!loadPlaneWithStatusBar(3, framebuffer)) return false;
+  memcpy(framebuffer, base.get(), planeBytes);  // plane 3 + status bar: the B/W baseline
   renderer.cleanupGrayscaleWithFrameBuffer();
-  return true;
+  return PageRender::Ok;
 }
 
 bool CbzReaderActivity::pageTurn(const bool isForward) {
@@ -245,13 +252,18 @@ void CbzReaderActivity::onReturnFromEndOfBook() {
   currentPage = (cbz && cbz->getPageCount() > 0) ? cbz->getPageCount() - 1 : 0;
 }
 
+// progress.bin: page index then page count, both little-endian uint32; the
+// count lets the home screen show progress without opening the archive.
 void CbzReaderActivity::saveProgress() {
   if (!cbz || currentPage == savedPage) return;
-  uint8_t data[4];
-  data[0] = currentPage & 0xFF;
-  data[1] = (currentPage >> 8) & 0xFF;
-  data[2] = (currentPage >> 16) & 0xFF;
-  data[3] = (currentPage >> 24) & 0xFF;
+  uint8_t data[8];
+  const uint32_t values[2] = {currentPage, cbz->getPageCount()};
+  for (int i = 0; i < 2; i++) {
+    data[i * 4] = values[i] & 0xFF;
+    data[i * 4 + 1] = (values[i] >> 8) & 0xFF;
+    data[i * 4 + 2] = (values[i] >> 16) & 0xFF;
+    data[i * 4 + 3] = (values[i] >> 24) & 0xFF;
+  }
   if (!ProgressFile::writeAtomic(cbz->getCachePath(), data, sizeof(data))) {
     LOG_ERR("CBR", "Failed to save progress: page %u", static_cast<unsigned>(currentPage));
     return;
@@ -263,13 +275,21 @@ void CbzReaderActivity::loadProgress() {
   if (!cbz) return;
   HalFile f;
   if (!Storage.openFileForRead("CBR", cbz->getCachePath() + "/progress.bin", f)) return;
-  uint8_t data[4];
-  if (f.read(data, 4) != 4) return;
-  currentPage = data[0] | (data[1] << 8) | (data[2] << 16) | (static_cast<uint32_t>(data[3]) << 24);
+  uint8_t data[8];
+  const int size = f.read(data, sizeof(data));
+  if (size != 4 && size != 8) return;
+  const uint32_t storedPage = data[0] | (data[1] << 8) | (data[2] << 16) | (static_cast<uint32_t>(data[3]) << 24);
+  const uint32_t storedCount =
+      size == 8 ? data[4] | (data[5] << 8) | (data[6] << 16) | (static_cast<uint32_t>(data[7]) << 24) : 0;
+  currentPage = storedPage;
   if (currentPage >= cbz->getPageCount() && cbz->getPageCount() > 0) {
     currentPage = cbz->getPageCount() - 1;
   }
-  savedPage = currentPage;
+  // Keep the file only when it matches the archive exactly; a 4-byte file from
+  // an earlier build, a changed page count or a clamped page is rewritten on
+  // the next save so the home screen reads the right percentage.
+  const bool current = size == 8 && storedCount == cbz->getPageCount() && currentPage == storedPage;
+  savedPage = current ? currentPage : UINT32_MAX;
   LOG_DBG("CBR", "Loaded progress: page %u/%u", static_cast<unsigned>(currentPage + 1),
           static_cast<unsigned>(cbz->getPageCount()));
 }

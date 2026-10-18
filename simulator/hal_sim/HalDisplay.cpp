@@ -171,8 +171,11 @@ bool HalDisplay::beginGray16() {
   simdisp::beginGray16();
   return true;
 }
-void HalDisplay::displayGray16Pass(uint8_t pass) { simdisp::presentGray16Pass(pass, grayLsb, grayMsb); }
-void HalDisplay::endGray16(const uint8_t*) { simdisp::endGray16(); }
+void HalDisplay::displayGray16Pass(uint8_t pass, bool) { simdisp::presentGray16Pass(pass, grayLsb, grayMsb); }
+void HalDisplay::endGray16(const uint8_t* bwBaseline) {
+  cleanupGrayscaleBuffers(bwBaseline);
+  simdisp::endGray16();
+}
 
 uint16_t HalDisplay::getDisplayWidth() const { return DISPLAY_WIDTH; }
 uint16_t HalDisplay::getDisplayHeight() const { return DISPLAY_HEIGHT; }

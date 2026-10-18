@@ -14,7 +14,7 @@ namespace cbz {
 // entry, not under __MACOSX/, and a basename that does not start with '.'.
 bool isPageEntry(std::string_view name);
 // Case-insensitive natural order ("2.jpg" before "10.jpg"): the page order.
-bool naturalLess(std::string_view a, std::string_view b);
+bool naturalLess(const std::string& a, const std::string& b);
 }  // namespace cbz
 
 // A comic book archive: a ZIP of page images shown through the Gray16 plane
@@ -37,6 +37,9 @@ class Cbz {
   // Archive entry name of a page in reading order; empty when out of range.
   const std::string& getPageName(uint32_t page) const;
   uint8_t calculateProgress(uint32_t currentPage) const;
+  // Whole-book percentage from a page index and the page count (progress.bin
+  // stores both, so the home screen needs no archive scan).
+  static uint8_t calculateProgress(uint32_t currentPage, uint32_t pageCount);
 
   void setupCacheDir() const;
   bool clearCache() const;
@@ -58,9 +61,13 @@ class Cbz {
   // extract -> 8-bit BMP fitted to the logical page -> dithered planes. A
   // failure leaves no plane file behind.
   bool ensurePagePlanes(uint32_t page, uint8_t orientation, uint16_t panelWidth, uint16_t panelHeight) const;
-  // Streams plane k (0..3) into a panel-sized framebuffer. `scratch` holds at
-  // least gray16::PageSpec::maxTileBytes() bytes for the page's spec.
-  bool loadPlane(uint32_t page, uint8_t k, uint8_t* framebuffer, uint8_t* scratch, size_t scratchLen) const;
+  // Streams plane k (0..3) of a page baked for panelWidth x panelHeight into
+  // a panel-sized framebuffer; `scratch` holds at least
+  // gray16::PageSpec::maxTileBytes() bytes for the page's spec. A header for
+  // another panel or a too-small scratch is rejected (file kept); a file whose
+  // body cannot be read is removed so the next ensurePagePlanes() rebuilds it.
+  bool loadPlane(uint32_t page, uint8_t k, uint16_t panelWidth, uint16_t panelHeight, uint8_t* framebuffer,
+                 uint8_t* scratch, size_t scratchLen) const;
 
  private:
   bool extractPage(uint32_t page, const std::string& outPath) const;

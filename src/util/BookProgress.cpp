@@ -55,19 +55,25 @@ int loadBookProgress(const std::string& path) {
     return xtc->calculateProgress(page);
   }
   if (FsHelpers::hasCbzExtension(path)) {
-    // One central-directory scan of the archive, like the XTC header read above.
+    // The reader stores page index + page count (8 bytes); only an older
+    // 4-byte file needs a central-directory scan for the count.
     auto cbz = makeUniqueNoThrow<Cbz>(path);
     if (!cbz) {
       LOG_ERR("HOME", "OOM: CBZ progress metadata");
       return -1;
     }
-    if (!cbz->load()) return -1;
     HalFile file;
-    if (!Storage.openFileForRead("HOME", cbz->getCachePath() + "/progress.bin", file) || file.read(data, 4) != 4)
-      return -1;
+    if (!Storage.openFileForRead("HOME", cbz->getCachePath() + "/progress.bin", file)) return -1;
+    const int size = file.read(data, 8);
+    if (size != 4 && size != 8) return -1;
     const uint32_t page = readLe32(data);
-    if (page >= cbz->getPageCount()) return 100;
-    return cbz->calculateProgress(page);
+    uint32_t pageCount = size == 8 ? readLe32(data + 4) : 0;
+    if (pageCount == 0) {
+      if (!cbz->load()) return -1;
+      pageCount = cbz->getPageCount();
+    }
+    if (pageCount == 0) return -1;
+    return Cbz::calculateProgress(page, pageCount);
   }
   return -1;
 }

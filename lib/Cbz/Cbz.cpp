@@ -94,7 +94,7 @@ bool isPageEntry(const std::string_view name) {
   return FsHelpers::hasJpgExtension(name) || FsHelpers::hasPngExtension(name);
 }
 
-bool naturalLess(const std::string_view a, const std::string_view b) { return FsHelpers::naturalLess(a, b); }
+bool naturalLess(const std::string& a, const std::string& b) { return FsHelpers::naturalLess(a, b); }
 
 }  // namespace cbz
 
@@ -157,8 +157,13 @@ const std::string& Cbz::getPageName(const uint32_t page) const {
 }
 
 uint8_t Cbz::calculateProgress(const uint32_t currentPage) const {
-  if (pages.empty()) return 0;
-  return static_cast<uint8_t>((currentPage + 1) * 100 / pages.size());
+  return calculateProgress(currentPage, static_cast<uint32_t>(pages.size()));
+}
+
+uint8_t Cbz::calculateProgress(const uint32_t currentPage, const uint32_t pageCount) {
+  if (pageCount == 0) return 0;
+  if (currentPage >= pageCount) return 100;
+  return static_cast<uint8_t>((currentPage + 1) * 100 / pageCount);
 }
 
 void Cbz::setupCacheDir() const {
@@ -241,7 +246,8 @@ bool Cbz::hasPagePlanes(const uint32_t page, const uint8_t orientation, const ui
                         const uint16_t panelHeight) const {
   gray16::PageSpec spec;
   if (!readPageSpec(page, &spec)) return false;
-  return spec.orientation == orientation && spec.panelWidth == panelWidth && spec.panelHeight == panelHeight;
+  return spec.orientation == orientation && spec.panelWidth == panelWidth && spec.panelHeight == panelHeight &&
+         spec.bandRows == gray16::DEFAULT_BAND_ROWS;
 }
 
 bool Cbz::ensurePagePlanes(const uint32_t page, const uint8_t orientation, const uint16_t panelWidth,
@@ -261,6 +267,9 @@ bool Cbz::ensurePagePlanes(const uint32_t page, const uint8_t orientation, const
   const std::string bmpPath = cachePath + "/page.bmp";
   const std::string planesPath = getPagePlanesPath(page);
   const std::string tmpPlanesPath = planesPath + ".tmp";
+  // Leftovers of an interrupted build.
+  Storage.remove(imagePath.c_str());
+  Storage.remove(bmpPath.c_str());
 
   // The extracted image and the BMP are not needed at the same time as the
   // planes, so each is removed as soon as the next step has consumed it.
@@ -281,18 +290,33 @@ bool Cbz::ensurePagePlanes(const uint32_t page, const uint8_t orientation, const
   return ok;
 }
 
-bool Cbz::loadPlane(const uint32_t page, const uint8_t k, uint8_t* framebuffer, uint8_t* scratch,
-                    const size_t scratchLen) const {
+bool Cbz::loadPlane(const uint32_t page, const uint8_t k, const uint16_t panelWidth, const uint16_t panelHeight,
+                    uint8_t* framebuffer, uint8_t* scratch, const size_t scratchLen) const {
   if (page >= pages.size() || k >= gray16::PLANE_COUNT) return false;
+  const std::string path = getPagePlanesPath(page);
   HalFile file;
-  if (!Storage.openFileForRead("CBZ", getPagePlanesPath(page), file)) return false;
+  if (!Storage.openFileForRead("CBZ", path, file)) return false;
   gray16::Reader reader;
   if (!reader.open(halReadAt, &file)) {
     LOG_ERR("CBZ", "Bad plane file for page %u", static_cast<unsigned>(page + 1));
     return false;
   }
+  // Never stream a plane sized for another panel into this framebuffer.
+  if (reader.spec().panelWidth != panelWidth || reader.spec().panelHeight != panelHeight) {
+    LOG_ERR("CBZ", "Plane file for page %u is for a %ux%u panel", static_cast<unsigned>(page + 1),
+            reader.spec().panelWidth, reader.spec().panelHeight);
+    return false;
+  }
+  if (!framebuffer || !scratch || scratchLen < reader.spec().maxTileBytes()) {
+    LOG_ERR("CBZ", "Plane scratch too small for page %u", static_cast<unsigned>(page + 1));
+    return false;
+  }
   if (!reader.loadPlane(k, framebuffer, scratch, scratchLen)) {
-    LOG_ERR("CBZ", "Plane %u read failed for page %u", k, static_cast<unsigned>(page + 1));
+    // Valid header, unreadable body (truncated or damaged): drop the file so
+    // the next view rebuilds it instead of failing forever.
+    file.close();
+    Storage.remove(path.c_str());
+    LOG_ERR("CBZ", "Plane %u read failed for page %u; planes removed", k, static_cast<unsigned>(page + 1));
     return false;
   }
   return true;
