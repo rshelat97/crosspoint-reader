@@ -19,7 +19,9 @@
 #include "FirmwareFlasher.h"
 
 namespace {
-constexpr char latestReleaseUrl[] = "https://api.github.com/repos/crosspoint-reader/crosspoint-reader/releases/latest";
+// This fork's releases, so fork builds (including USB-locked devices, whose
+// only easy update path is OTA) don't update back to upstream builds.
+constexpr char latestReleaseUrl[] = "https://api.github.com/repos/rshelat97/crosspoint-reader/releases/latest";
 }  // namespace
 
 OtaUpdater::OtaUpdaterError OtaUpdater::checkForUpdate() {

@@ -2353,6 +2353,22 @@ void GfxRenderer::displayGrayBuffer() const {
   absoluteGrayPlanes = false;
 }
 
+bool GfxRenderer::supportsGray16() const { return display.supportsGray16(); }
+
+bool GfxRenderer::beginGray16() const {
+  absoluteGrayPlanes = display.beginGray16();
+  return absoluteGrayPlanes;
+}
+
+void GfxRenderer::displayGray16Pass(const uint8_t pass) const { display.displayGray16Pass(pass, fadingFix); }
+
+void GfxRenderer::endGray16() const {
+  display.endGray16(frameBuffer);
+  absoluteGrayPlanes = false;
+}
+
+void GfxRenderer::setGray16FineLut(const uint8_t* lut112) const { display.setGray16FineLut(lut112); }
+
 void GfxRenderer::setRenderMode(RenderMode mode) {
   if (mode == BW && absoluteGrayPlanes) {
     display.cleanupGrayscaleBuffers(nullptr);  // cancel an unfinished absolute pass

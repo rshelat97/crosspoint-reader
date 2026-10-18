@@ -380,6 +380,16 @@ class GfxRenderer {
   void displayGrayBuffer() const;
   // Active input encoding, used when drawing monochrome overlays into planes.
   bool grayPlanesAreAbsolute() const { return absoluteGrayPlanes; }
+  // 16-level pages as two absolute passes (protocol in HalDisplay.h). The
+  // pass refresh carries the fading fix like displayGrayBuffer(); endGray16()
+  // restores the B/W baseline from the framebuffer. While a sequence is open
+  // the planes count as absolute, so setRenderMode(BW) cancels an abandoned one.
+  bool supportsGray16() const;
+  bool beginGray16() const;
+  void displayGray16Pass(uint8_t pass) const;
+  void endGray16() const;
+  // Fine-pass LUT for the device's 16-level path (HalDisplay::setGray16FineLut).
+  void setGray16FineLut(const uint8_t* lut112) const;
 
   // Tiled grayscale (X4): stream one band of a plane straight to controller RAM
   // from `scratch` (panelWidthBytes * numRows, physical rows [yStart, yStart+

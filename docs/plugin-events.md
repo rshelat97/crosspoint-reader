@@ -134,7 +134,7 @@ One handler per event. A handler is either:
   fetches a fresh sleep image: the sleep-entry drain runs before the sleep
   screen renders, and the CUSTOM sleep mode reads `/sleep.bmp` first, so the
   fetched image appears on that very sleep. Downloading a book file (`.epub`,
-  `.txt`, `.md`, `.xtc`) also marks the Library index stale, so the book
+  `.txt`, `.md`, `.xtc`, `.cbz`) also marks the Library index stale, so the book
   appears the next time the Library opens. Hidden files and folders don't
   mark it.
 

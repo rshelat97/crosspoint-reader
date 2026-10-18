@@ -14,6 +14,10 @@ on:
     branches: [develop, master, 'claude/**']
   pull_request:
   workflow_dispatch:
+  # Redeploy once a release's firmware is attached, so the flasher offers it.
+  workflow_run:
+    workflows: ["Compile Release"]
+    types: [completed]
 
 permissions:
   contents: read
@@ -57,6 +61,12 @@ jobs:
           CROSSPOINT_SIM_FS=sim-smoke-fs ./build/sim-native/crosspoint_sim --frames 1200 --dump reader.ppm \
             --key 1:60:64 --key 1:150:154 --key 1:250:254 \
             --key 5:500:504 --key 5:650:654 --key 5:800:804 --key 5:950:954
+
+      - name: Comics smoke (16-level planes and the 4-level fallback)
+        run: simulator/tests/cbz_smoke.sh build/sim-native/crosspoint_sim
+
+      - name: 16-level lab smoke (test card through the two-pass path)
+        run: simulator/tests/gray16_lab_smoke.sh build/sim-native/crosspoint_sim
 
       - name: File Transfer smoke (hotspot mode + real web server endpoints)
         run: |
@@ -108,6 +118,26 @@ jobs:
           cp simulator/web/* site/
           cp build/sim-wasm/crosspoint_sim.js build/sim-wasm/crosspoint_sim.wasm site/
 
+      - name: Test flasher logic
+        run: node --test tools/web-flasher/test/flasher-core.test.mjs
+
+      - name: Add web flasher and latest release firmware
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          mkdir -p site/flash/firmware
+          cp tools/web-flasher/index.html tools/web-flasher/flasher.js tools/web-flasher/flasher-core.js site/flash/
+          tag="$(gh release view --json tagName -q .tagName 2>/dev/null || true)"
+          if [ -n "$tag" ]; then
+            # Assets are attached minutes after publishing (Compile Release); until
+            # then the flasher just lists none.
+            gh release download "$tag" --pattern 'crosspoint-*.bin' --dir site/flash/firmware \
+              || echo "no firmware assets on $tag yet"
+          fi
+          python3 tools/web-flasher/build_manifest.py site/flash/firmware "$tag"
+
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v4
         with:
@@ -116,7 +146,9 @@ jobs:
   deploy:
     # Deploy on branch pushes (not PRs from forks). Requires Pages to be
     # enabled with Source = "GitHub Actions" (see header comment).
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    if: >-
+      github.event_name == 'push' || github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
     needs: wasm
     runs-on: ubuntu-latest
     permissions:

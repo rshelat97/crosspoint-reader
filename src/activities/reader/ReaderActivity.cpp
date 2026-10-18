@@ -11,6 +11,7 @@
 #include <cctype>
 #include <cstdio>
 
+#include "CbzReaderActivity.h"
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
 #include "EpubReaderActivity.h"
@@ -35,6 +36,8 @@ std::unique_ptr<ReaderActivity> ReaderActivity::create(GfxRenderer& renderer, Ma
   std::unique_ptr<ReaderActivity> activity;
   if (FsHelpers::hasXtcExtension(path)) {
     activity = makeUniqueNoThrow<XtcReaderActivity>(renderer, mappedInput, std::move(path), allowFastInitialRefresh);
+  } else if (FsHelpers::hasCbzExtension(path)) {
+    activity = makeUniqueNoThrow<CbzReaderActivity>(renderer, mappedInput, std::move(path), allowFastInitialRefresh);
   } else {
     activity = makeUniqueNoThrow<EpubReaderActivity>(renderer, mappedInput, std::move(path), allowFastInitialRefresh);
   }

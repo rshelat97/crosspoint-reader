@@ -222,7 +222,7 @@
   canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
 
   // --- book upload ----------------------------------------------------------
-  var BOOK_EXT = /\.(epub|txt|xtc)$/i;
+  var BOOK_EXT = /\.(epub|txt|xtc|cbz)$/i;
 
   function addBooks(files) {
     if (!api || !booted) {
@@ -231,7 +231,7 @@
     }
     var accepted = Array.prototype.filter.call(files, function (f) { return BOOK_EXT.test(f.name); });
     if (!accepted.length) {
-      toast('Only .epub, .txt and .xtc files are supported.', true);
+      toast('Only .epub, .txt, .xtc and .cbz files are supported.', true);
       return;
     }
     var remaining = accepted.length;

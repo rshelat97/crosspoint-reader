@@ -34,7 +34,8 @@ async function findSimClient() {
     if (c) return c;
   }
   const all = await self.clients.matchAll({ type: 'window' });
-  return all.find(c => !new URL(c.url).pathname.includes('/device')) || null;
+  // The simulator page is the window that is neither a device page nor the flasher.
+  return all.find(c => !/\/(device|flash)(\/|$)/.test(new URL(c.url).pathname)) || null;
 }
 
 async function proxyToSim(request, devicePath) {

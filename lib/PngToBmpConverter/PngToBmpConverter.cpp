@@ -401,8 +401,13 @@ static void convertScanlineToGray(const PngDecodeContext& ctx, uint8_t* grayRow)
 }
 
 bool PngToBmpConverter::pngFileToBmpStreamInternal(HalFile& pngFile, Print& bmpOut, int targetWidth, int targetHeight,
-                                                   bool oneBit, bool crop, bool originalThresholds) {
-  LOG_DBG("PNG", "Converting PNG to %s BMP (target: %dx%d)", oneBit ? "1-bit" : "2-bit", targetWidth, targetHeight);
+                                                   bool oneBit, bool crop, bool originalThresholds, bool gray8) {
+  gray8 = gray8 && !oneBit;
+  LOG_DBG("PNG", "Converting PNG to %s BMP (target: %dx%d)",
+          gray8    ? "8-bit"
+          : oneBit ? "1-bit"
+                   : "2-bit",
+          targetWidth, targetHeight);
 
   // Verify PNG signature
   uint8_t sig[8];
@@ -601,7 +606,7 @@ bool PngToBmpConverter::pngFileToBmpStreamInternal(HalFile& pngFile, Print& bmpO
 
   // Write BMP header
   int bytesPerRow;
-  if (USE_8BIT_OUTPUT && !oneBit) {
+  if ((USE_8BIT_OUTPUT || gray8) && !oneBit) {
     writeBmpHeader8bit(bmpOut, outWidth, outHeight);
     bytesPerRow = (outWidth + 3) / 4 * 4;
   } else if (oneBit) {
@@ -633,7 +638,7 @@ bool PngToBmpConverter::pngFileToBmpStreamInternal(HalFile& pngFile, Print& bmpO
 
       return false;
     }
-  } else if (!USE_8BIT_OUTPUT) {
+  } else if (!USE_8BIT_OUTPUT && !gray8) {
     if (USE_ATKINSON) {
       atkinsonDitherer = makeUniqueNoThrow<AtkinsonDitherer>(outWidth, originalThresholds);
       if (!atkinsonDitherer || !atkinsonDitherer->isValid()) {
@@ -686,7 +691,9 @@ bool PngToBmpConverter::pngFileToBmpStreamInternal(HalFile& pngFile, Print& bmpO
       // Direct output (no scaling)
       memset(rowBuffer, 0, bytesPerRow);
 
-      if (USE_8BIT_OUTPUT && !oneBit) {
+      if (gray8) {
+        memcpy(rowBuffer, grayRow, outWidth);
+      } else if (USE_8BIT_OUTPUT && !oneBit) {
         for (int x = 0; x < outWidth; x++) {
           rowBuffer[x] = adjustPixel(grayRow[x]);
         }
@@ -751,7 +758,11 @@ bool PngToBmpConverter::pngFileToBmpStreamInternal(HalFile& pngFile, Print& bmpO
       while (srcY_fp >= nextOutY_srcStart && currentOutY < outHeight) {
         memset(rowBuffer, 0, bytesPerRow);
 
-        if (USE_8BIT_OUTPUT && !oneBit) {
+        if (gray8) {
+          for (int x = 0; x < outWidth; x++) {
+            rowBuffer[x] = (rowCount[x] > 0) ? static_cast<uint8_t>(rowAccum[x] / rowCount[x]) : 0;
+          }
+        } else if (USE_8BIT_OUTPUT && !oneBit) {
           for (int x = 0; x < outWidth; x++) {
             const uint8_t gray = (rowCount[x] > 0) ? (rowAccum[x] / rowCount[x]) : 0;
             rowBuffer[x] = adjustPixel(gray);
@@ -832,4 +843,9 @@ bool PngToBmpConverter::pngFileToBmpStreamWithSize(HalFile& pngFile, Print& bmpO
 bool PngToBmpConverter::pngFileTo1BitBmpStreamWithSize(HalFile& pngFile, Print& bmpOut, int targetMaxWidth,
                                                        int targetMaxHeight) {
   return pngFileToBmpStreamInternal(pngFile, bmpOut, targetMaxWidth, targetMaxHeight, true, true);
+}
+
+bool PngToBmpConverter::pngFileToGray8BmpStreamWithSize(HalFile& pngFile, Print& bmpOut, int maxWidth, int maxHeight) {
+  return pngFileToBmpStreamInternal(pngFile, bmpOut, maxWidth, maxHeight, /*oneBit=*/false, /*crop=*/false,
+                                    /*originalThresholds=*/false, /*gray8=*/true);
 }

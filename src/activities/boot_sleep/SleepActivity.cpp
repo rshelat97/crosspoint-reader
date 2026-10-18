@@ -1,6 +1,7 @@
 #include "SleepActivity.h"
 
 #include <BitmapHelpers.h>
+#include <Cbz.h>
 #include <Epub.h>
 #include <Epub/converters/PngToFramebufferConverter.h>
 #include <FontCacheManager.h>
@@ -832,7 +833,7 @@ void SleepActivity::renderCoverSleepScreen() const {
   std::string coverBmpPath;
   bool cropped = SETTINGS.sleepScreenCoverMode == CrossPointSettings::SLEEP_SCREEN_COVER_MODE::CROP;
 
-  // Check if the current book is XTC, TXT, or EPUB
+  // Check if the current book is XTC, TXT, EPUB or CBZ
   if (FsHelpers::hasXtcExtension(APP_STATE.openEpubPath)) {
     // Handle XTC file
     Xtc lastXtc(APP_STATE.openEpubPath, "/.crosspoint");
@@ -862,6 +863,20 @@ void SleepActivity::renderCoverSleepScreen() const {
     }
 
     coverBmpPath = lastEpub.getCoverBmpPath(cropped, originalThresholds);
+  } else if (FsHelpers::hasCbzExtension(APP_STATE.openEpubPath)) {
+    // Comic archive: the first page is the cover, converted like an EPUB cover.
+    Cbz lastCbz(APP_STATE.openEpubPath);
+    if (!lastCbz.load()) {
+      LOG_ERR("SLP", "Failed to load last CBZ");
+      return (this->*renderNoCoverSleepScreen)();
+    }
+
+    if (!lastCbz.generateCoverBmp(cropped, originalThresholds)) {
+      LOG_ERR("SLP", "Failed to generate CBZ cover bmp");
+      return (this->*renderNoCoverSleepScreen)();
+    }
+
+    coverBmpPath = lastCbz.getCoverBmpPath(cropped, originalThresholds);
   } else {
     return (this->*renderNoCoverSleepScreen)();
   }

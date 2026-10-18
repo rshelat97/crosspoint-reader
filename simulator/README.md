@@ -9,7 +9,10 @@ behaviour are faithful.
 ## Try it
 
 The GitHub Actions workflow (`.github/workflows/simulator.yml`) builds the
-WASM bundle on every push and deploys it to GitHub Pages.
+WASM bundle on every push and deploys it to GitHub Pages, together with the
+USB web flasher (`tools/web-flasher/`, served at `flash/`) and the latest
+release's firmware. It also redeploys after "Compile Release" finishes, so a
+new release shows up in the flasher.
 
 One-time setup: repository **Settings → Pages → Build and deployment →
 Source: "GitHub Actions"**. To deploy from a non-default branch, also allow it
@@ -56,8 +59,8 @@ CROSSPOINT_SIM_FS=./simfs ./build/sim-native/crosspoint_sim \
 ```
 
 The simulated SD card is a host directory (`$CROSSPOINT_SIM_FS`, default
-`./simfs`). Drop EPUBs into `simfs/books/` and they appear in the file
-browser; the `.crosspoint` cache is created there too, exactly as on device.
+`./simfs`). Drop EPUBs (or `.txt`, `.xtc`, `.cbz` files) into `simfs/books/`
+and they appear in the file browser; the `.crosspoint` cache is created there too, exactly as on device.
 
 Sandboxed/offline configure: add `-DSIM_FETCH_JPEGDEC=OFF
 -DSIM_FETCH_ARDUINOJSON=OFF` to skip the FetchContent downloads and fall back
@@ -107,7 +110,12 @@ Key design points:
   browser headers) are needed. Semaphores are depth counters.
 - **Display semantics match the panel**: 1-bpp frames present as B/W; 2-bpp
   grayscale overlay planes composite over the B/W base like the SSD1677
-  waveforms (value 0 = untouched, 1–2 light gray, 3 dark gray).
+  waveforms (value 0 = untouched, 1–2 light gray, 3 dark gray). Absolute
+  planes replace every pixel (0 black .. 3 white, no base frame), and 16-level
+  pages run the two-pass model from `docs/comics-gray16.md`: a coarse pass
+  from white, then a fine pass, ending at brightness × 17. Set
+  `CROSSPOINT_SIM_NO_GRAY16=1` (native build only) to force the 4-level
+  fallback the device uses without a fine waveform file.
 - **Input contract mirrors `InputManager`**: frame-scoped pressed/released
   edges, tap slop, swipe thresholds and hold timing are recomputed per
   `update()` just like the freeink SDK, and touch coordinates are fed
@@ -126,5 +134,6 @@ Key design points:
   shows a notice.
 - TLS, DRM-protected (LCP) books and BLE page turners: crypto ciphers report
   failure and BLE uses the SDK's no-radio backend.
-- OTA flashing, battery drain (fixed 87%), USB, and the tilt sensor.
+- OTA flashing, battery drain (fixed 87%), USB, the USB-lock fuses (always
+  Unlocked), and the tilt sensor.
 - E-ink refresh artifacts: a FULL refresh is visualised with a brief flash.

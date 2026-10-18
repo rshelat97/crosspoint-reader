@@ -46,6 +46,7 @@
 #include "fontIds.h"
 #include "platform/UsbSerialJtagHandoff.h"
 #include "util/ButtonNavigator.h"
+#include "util/Gray16Lut.h"
 #include "util/PluginEvents.h"
 #include "util/ScreenshotUtil.h"
 #include "util/Timezones.h"
@@ -691,6 +692,11 @@ void setup() {
   bool needsWakeRefresh = false;
 
   setupDisplayAndFonts(resume != BootResume::Splash);
+
+  // Opt-in 16-level pages: a fine-pass LUT on the card enables the two-pass path.
+  static_assert(gray16lut::LUT_SIZE == HalDisplay::GRAY16_LUT_SIZE, "fine LUT size contract");
+  uint8_t gray16Lut[gray16lut::LUT_SIZE];
+  if (gray16lut::loadFromStorage(gray16Lut) != gray16lut::Source::None) display.setGray16FineLut(gray16Lut);
 
   switch (resume) {
     case BootResume::Silent:

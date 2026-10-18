@@ -18,7 +18,7 @@ Check [our Devices page](https://crosspointreader.com/devices) for the full list
 
 - **Reader engine**: EPUB 2/3 rendering with embedded-style option, image handling, hyphenation, kerning, adaptive table layouts, native CJK ruby annotations, chapter navigation, footnotes, bookmarks, dictionary lookups ([StarDict](docs/dictionary.md)), go-to-percent, auto page turn, orientation control, focus reading, KOReader progress sync and more.
 
-- **Various formats**: native handling for `.epub`, `.xtc/.xtch`, `.txt`, and `.bmp`.
+- **Various formats**: native handling for `.epub`, `.xtc/.xtch`, `.txt`, `.bmp`, and `.cbz` comics (fork feature: 16 gray levels in the simulator and, experimentally, on SSD1677 boards such as the X4 once a tuned fine waveform file is on the card, otherwise 4 levels; see [docs/comics-gray16.md](docs/comics-gray16.md)).
 
 - **Touch reading**: follow EPUB links and look up words in the dictionary on touch-enabled devices.
 
@@ -71,6 +71,10 @@ https://crosspointreader.com/#unlock-tool before you can flash CrossPoint.
 **Not sure if your device is locked?** Power it on, connect the USB-C cable, and try flashing via the web flasher first (see
 [Install firmware](#install-firmware) below). If the browser's serial device picker does not show your device, try a different
 USB port or browser before assuming the device is locked. Only reach for the unlocker if the device still doesn't appear.
+
+**This fork:** **Settings → System → About** shows **USB Flashing** (Unlocked, Locked… or Secure only), read from the
+chip's fuses. This fork's builds update over Wi-Fi from this fork's releases, and its web flasher at
+https://rshelat97.github.io/crosspoint-reader/flash/ walks locked devices through the non-USB routes.
 
 > ### ⚠️ WARNING: READ THIS BEFORE USING THE UNLOCKER ⚠️
 > 

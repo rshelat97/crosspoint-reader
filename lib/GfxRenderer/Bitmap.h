@@ -70,6 +70,10 @@ class Bitmap {
   ~Bitmap();
   BmpReaderError parseHeaders();
   BmpReaderError readNextRow(uint8_t* data, uint8_t* rowBuffer) const;
+  // One luminance byte per pixel (width bytes), palette-mapped for indexed
+  // BMPs; no quantization, dithering or tone adjustment. Rows advance like
+  // readNextRow; do not mix the two on one pass over the data.
+  BmpReaderError readNextRowLum(uint8_t* lumOut, uint8_t* rowBuffer) const;
   BmpReaderError rewindToData() const;
   int getWidth() const { return width; }
   int getHeight() const { return height; }
