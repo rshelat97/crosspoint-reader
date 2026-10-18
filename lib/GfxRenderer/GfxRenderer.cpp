@@ -2367,6 +2367,8 @@ void GfxRenderer::endGray16() const {
   absoluteGrayPlanes = false;
 }
 
+void GfxRenderer::setGray16FineLut(const uint8_t* lut112) const { display.setGray16FineLut(lut112); }
+
 void GfxRenderer::setRenderMode(RenderMode mode) {
   if (mode == BW && absoluteGrayPlanes) {
     display.cleanupGrayscaleBuffers(nullptr);  // cancel an unfinished absolute pass

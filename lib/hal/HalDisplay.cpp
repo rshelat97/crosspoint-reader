@@ -1,12 +1,49 @@
 #include <HalDisplay.h>
 #include <HalGPIO.h>
 
+#include <cstring>
+
 // Global HalDisplay instance
 HalDisplay display;
+
+namespace {
+// Coarse-pass uploads. The factory 4-level LUT selects black at 11 and white
+// at 00, the complement of the public plane encoding. Absolute mode would have
+// the driver complement, but the fine pass needs the facade's Overlay mode
+// (see beginGray16), so the planes are streamed as complemented strips from a
+// small stack chunk instead (240 two-row strips per plane on the X4).
+constexpr size_t COARSE_CHUNK_BYTES = 240;
+
+void writeComplementedRows(EInkDisplay& eink, EInkDisplay::GrayPlane plane, const uint8_t* rows, uint16_t yStart,
+                           uint16_t numRows) {
+  const uint16_t widthBytes = eink.getDisplayWidthBytes();
+  if (!rows || widthBytes == 0 || widthBytes > COARSE_CHUNK_BYTES) return;
+  uint8_t chunk[COARSE_CHUNK_BYTES];
+  const uint16_t rowsPerStrip = static_cast<uint16_t>(sizeof(chunk) / widthBytes);
+  for (uint16_t y = 0; y < numRows; y += rowsPerStrip) {
+    const uint16_t count = static_cast<uint16_t>(numRows - y < rowsPerStrip ? numRows - y : rowsPerStrip);
+    const size_t bytes = static_cast<size_t>(count) * widthBytes;
+    const uint8_t* src = rows + static_cast<size_t>(y) * widthBytes;
+    for (size_t i = 0; i < bytes; i++) chunk[i] = static_cast<uint8_t>(~src[i]);
+    eink.writeGrayscalePlaneStrip(plane, chunk, static_cast<uint16_t>(yStart + y), count);
+  }
+}
+}  // namespace
 
 #define SD_SPI_MISO 7
 
 HalDisplay::HalDisplay() : einkDisplay(EPD_SCLK, EPD_MOSI, EPD_CS, EPD_DC, EPD_RST, EPD_BUSY) {}
+
+// absoluteGrayPending is true from a successful displayGrayscaleBase(Absolute)
+// until the next B/W refresh or grayscale base. The SDK facade ends an Absolute
+// pass through cancelGrayscalePass(), which sets its private _grayPassFailed
+// flag, and FreeInkDisplay::displayGrayBuffer() then returns early until one of
+// those calls clears it: a 16-level sequence started in that state would upload
+// its planes but never run a waveform.
+void HalDisplay::noteBwRefresh() {
+  absoluteGrayPending = false;
+  gray16Stage = Gray16Stage::Idle;
+}
 
 HalDisplay::~HalDisplay() {}
 
@@ -64,6 +101,7 @@ void HalDisplay::displayBuffer(HalDisplay::RefreshMode mode, bool turnOffScreen)
     einkDisplay.requestResync(1);
   }
 
+  noteBwRefresh();
   einkDisplay.displayBuffer(convertRefreshMode(mode), turnOffScreen);
 }
 
@@ -72,6 +110,7 @@ void HalDisplay::displayBufferAsync(HalDisplay::RefreshMode mode) {
     einkDisplay.requestResync(1);
   }
 
+  noteBwRefresh();
   einkDisplay.displayBufferAsyncNoShadow(convertRefreshMode(mode));
 }
 
@@ -90,6 +129,7 @@ void HalDisplay::refreshDisplay(HalDisplay::RefreshMode mode, bool turnOffScreen
     einkDisplay.requestResync(1);
   }
 
+  noteBwRefresh();
   einkDisplay.refreshDisplay(convertRefreshMode(mode), turnOffScreen);
 }
 
@@ -109,10 +149,19 @@ void HalDisplay::returnFrameBufferStorage() { einkDisplay.returnBuildStorage(); 
 
 bool HalDisplay::displayGrayscaleBase(GrayscaleMode mode, RefreshMode fallback, bool turnOffScreen) {
   if (gpio.deviceIsX3() && fallback == HALF_REFRESH) einkDisplay.requestResync();
-  return einkDisplay.displayGrayscaleBase(mode, static_cast<EInkDisplay::RefreshMode>(fallback), turnOffScreen);
+  gray16Stage = Gray16Stage::Idle;
+  const bool ok =
+      einkDisplay.displayGrayscaleBase(mode, static_cast<EInkDisplay::RefreshMode>(fallback), turnOffScreen);
+  if (ok) absoluteGrayPending = mode == GrayscaleMode::Absolute;
+  return ok;
 }
 
 void HalDisplay::copyGrayscaleBuffers(const uint8_t* lsbBuffer, const uint8_t* msbBuffer) {
+  if (gray16Stage == Gray16Stage::Coarse) {
+    writeComplementedRows(einkDisplay, EInkDisplay::GRAY_PLANE_LSB, lsbBuffer, 0, einkDisplay.getDisplayHeight());
+    writeComplementedRows(einkDisplay, EInkDisplay::GRAY_PLANE_MSB, msbBuffer, 0, einkDisplay.getDisplayHeight());
+    return;
+  }
   einkDisplay.copyGrayscaleBuffers(lsbBuffer, msbBuffer);
 }
 
@@ -128,6 +177,7 @@ void HalDisplay::displayGrayscaleBase(RefreshMode fallback, bool turnOffScreen) 
     einkDisplay.requestResync(1);
   }
 
+  noteBwRefresh();
   einkDisplay.displayGrayscaleBase(convertRefreshMode(fallback), turnOffScreen);
 }
 
@@ -137,36 +187,85 @@ void HalDisplay::preconditionGrayscale(uint16_t x, uint16_t y, uint16_t w, uint1
   einkDisplay.preconditionGrayscale(x, y, w, h);
 }
 
-void HalDisplay::copyGrayscaleLsbBuffers(const uint8_t* lsbBuffer) { einkDisplay.copyGrayscaleLsbBuffers(lsbBuffer); }
+void HalDisplay::copyGrayscaleLsbBuffers(const uint8_t* lsbBuffer) {
+  if (gray16Stage == Gray16Stage::Coarse) {
+    writeComplementedRows(einkDisplay, EInkDisplay::GRAY_PLANE_LSB, lsbBuffer, 0, einkDisplay.getDisplayHeight());
+    return;
+  }
+  einkDisplay.copyGrayscaleLsbBuffers(lsbBuffer);
+}
 
-void HalDisplay::copyGrayscaleMsbBuffers(const uint8_t* msbBuffer) { einkDisplay.copyGrayscaleMsbBuffers(msbBuffer); }
+void HalDisplay::copyGrayscaleMsbBuffers(const uint8_t* msbBuffer) {
+  if (gray16Stage == Gray16Stage::Coarse) {
+    writeComplementedRows(einkDisplay, EInkDisplay::GRAY_PLANE_MSB, msbBuffer, 0, einkDisplay.getDisplayHeight());
+    return;
+  }
+  einkDisplay.copyGrayscaleMsbBuffers(msbBuffer);
+}
 
-void HalDisplay::cleanupGrayscaleBuffers(const uint8_t* bwBuffer) { einkDisplay.cleanupGrayscaleBuffers(bwBuffer); }
+void HalDisplay::cleanupGrayscaleBuffers(const uint8_t* bwBuffer) {
+  gray16Stage = Gray16Stage::Idle;
+  einkDisplay.cleanupGrayscaleBuffers(bwBuffer);
+}
 
 void HalDisplay::displayGrayBuffer(bool turnOffScreen) { einkDisplay.displayGrayBuffer(turnOffScreen); }
 
 void HalDisplay::writeGrayscalePlaneStrip(bool lsbPlane, const uint8_t* rows, uint16_t yStart, uint16_t numRows) {
-  einkDisplay.writeGrayscalePlaneStrip(lsbPlane ? EInkDisplay::GRAY_PLANE_LSB : EInkDisplay::GRAY_PLANE_MSB, rows,
-                                       yStart, numRows);
+  const auto plane = lsbPlane ? EInkDisplay::GRAY_PLANE_LSB : EInkDisplay::GRAY_PLANE_MSB;
+  if (gray16Stage == Gray16Stage::Coarse) {
+    writeComplementedRows(einkDisplay, plane, rows, yStart, numRows);
+    return;
+  }
+  einkDisplay.writeGrayscalePlaneStrip(plane, rows, yStart, numRows);
 }
 
 bool HalDisplay::supportsStripGrayscale() const { return grayscaleCapabilities().stripUploads; }
 
 bool HalDisplay::combinesGrayscaleBase() const { return grayscaleCapabilities().base == GrayscaleBase::Combined; }
 
-// No 16-level waveforms on the device: supportsGray16() and beginGray16()
-// return false, readers take the 4-level Overlay path, and the pass entry point
-// is unreachable here. endGray16() still restores the baseline so a caller
-// that ends a cancelled sequence leaves the controller consistent. Contract
-// notes for a device implementation are in HalDisplay.h.
-bool HalDisplay::supportsGray16() const { return false; }
+// 16-level pages: two factory-mode refreshes staged in the facade's Overlay
+// mode (HalDisplay.h has the protocol). Absolute mode is never entered:
+// FreeInkDisplay::displayGrayBuffer() rejects a custom LUT there, and ending an
+// Absolute pass leaves the facade refusing further grayscale passes until a
+// B/W refresh (absoluteGrayPending).
+bool HalDisplay::supportsGray16() const {
+  // The Absolute capability marks the controllers whose factory 4-level pass
+  // is verified; Overlay staging carries both passes and strip uploads carry
+  // the coarse complement. Inverted output reports no capabilities at all.
+  return gray16FineLutSet && grayscaleCapabilities(GrayscaleMode::Absolute).supported() &&
+         grayscaleCapabilities(GrayscaleMode::Overlay).supported() && supportsStripGrayscale();
+}
 
-bool HalDisplay::beginGray16() { return false; }
+bool HalDisplay::beginGray16() {
+  if (!supportsGray16() || absoluteGrayPending) return false;
+  gray16Stage = Gray16Stage::Coarse;
+  return true;
+}
 
-void HalDisplay::displayGray16Pass(uint8_t, bool) {}
+void HalDisplay::displayGray16Pass(uint8_t pass, bool turnOffScreen) {
+  switch (pass) {
+    case 0:
+      // The board's own factory 4-level pass (lut == nullptr) on the complemented planes.
+      einkDisplay.displayGrayBuffer(turnOffScreen, nullptr, /*factoryMode=*/true);
+      gray16Stage = Gray16Stage::Fine;
+      break;
+    case 1:
+      // The driver reads the LUT with pgm_read_byte, a plain byte load on ESP32, so RAM is fine.
+      if (gray16FineLutSet) einkDisplay.displayGrayBuffer(turnOffScreen, gray16FineLut, /*factoryMode=*/true);
+      break;
+    default:
+      break;
+  }
+}
 
 void HalDisplay::endGray16(const uint8_t* bwBaseline) {
+  gray16Stage = Gray16Stage::Idle;
   if (bwBaseline) cleanupGrayscaleBuffers(bwBaseline);
+}
+
+void HalDisplay::setGray16FineLut(const uint8_t* lut112) {
+  gray16FineLutSet = lut112 != nullptr;
+  if (lut112) memcpy(gray16FineLut, lut112, GRAY16_LUT_SIZE);
 }
 
 uint16_t HalDisplay::getDisplayWidth() const { return einkDisplay.getDisplayWidth(); }

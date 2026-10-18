@@ -120,12 +120,12 @@ class HalDisplay {
   // the whole text body (a visible flash).
   bool combinesGrayscaleBase() const;
 
-  // 16-level grayscale as two absolute 4-level passes with distinct waveforms.
-  // Pass 0 (coarse) carries brightness bits 3..2, pass 1 (fine) bits 1..0, as
-  // LSB/MSB planes in the SDK's public absolute encoding (bit set = that
-  // brightness bit is 1, framebuffer layout); any controller-side complement
-  // is this HAL's job. Protocol:
-  //   if (beginGray16()) {  // no visible effect; both pass LUTs must be absolute
+  // 16-level grayscale as two 4-level passes with distinct waveforms. Pass 0
+  // (coarse) carries brightness bits 3..2, pass 1 (fine) bits 1..0, as LSB/MSB
+  // planes in the SDK's public absolute encoding (bit set = that brightness
+  // bit is 1, framebuffer layout); any controller-side complement is this
+  // HAL's job. Protocol:
+  //   if (beginGray16()) {  // no visible effect; false -> take the 4-level Overlay path
   //     for (pass = 0; pass < 2; pass++) {
   //       copyGrayscaleLsbBuffers(plane[pass == 0 ? 2 : 0]);
   //       copyGrayscaleMsbBuffers(plane[pass == 0 ? 3 : 1]);
@@ -133,9 +133,15 @@ class HalDisplay {
   //     }
   //     endGray16(bwBaseline);  // B/W approximation (plane 3): restores the differential baseline
   //   }
-  // Only the simulator implements the passes today; the device returns false
-  // from supportsGray16() and beginGray16(), and callers take the 4-level
-  // Overlay path. Notes for a device implementation: docs/comics-gray16.md.
+  // Device (SSD1677): both passes are factory-mode refreshes staged in the
+  // SDK's Overlay mode. Pass 0 runs the board's factory 4-level LUT on planes
+  // this HAL complements while uploading; pass 1 runs the fine LUT from
+  // setGray16FineLut() on the planes as uploaded. supportsGray16() needs that
+  // LUT plus Absolute, Overlay and strip-upload support, and beginGray16()
+  // also fails right after an Absolute-mode pass (the SDK then refuses further
+  // grayscale passes until a B/W refresh). Both passes set the driver's
+  // post-grayscale clean, so the next FAST refresh is promoted to a clean.
+  // The simulator models the ideal result instead. See docs/comics-gray16.md.
   bool supportsGray16() const;
   bool beginGray16();
   void displayGray16Pass(uint8_t pass, bool turnOffScreen = false);
@@ -157,6 +163,13 @@ class HalDisplay {
   EInkDisplay einkDisplay;
   uint8_t gray16FineLut[GRAY16_LUT_SIZE]{};
   bool gray16FineLutSet = false;
+  // Device 16-level sequence state: which pass the next plane uploads belong
+  // to, and whether the SDK still refuses grayscale passes after an
+  // Absolute-mode pass (cleared by the next B/W refresh or grayscale base).
+  enum class Gray16Stage : uint8_t { Idle, Coarse, Fine };
+  Gray16Stage gray16Stage = Gray16Stage::Idle;
+  bool absoluteGrayPending = false;
+  void noteBwRefresh();
 };
 
 extern HalDisplay display;

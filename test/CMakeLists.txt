@@ -78,6 +78,7 @@ add_subdirectory(txt_to_html)
 
 add_subdirectory(absolute_grayscale)
 add_subdirectory(gray16)
+add_subdirectory(gray16lut)
 add_subdirectory(cbz)
 add_subdirectory(sim_display)
 

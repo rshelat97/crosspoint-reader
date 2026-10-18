@@ -65,6 +65,9 @@ jobs:
       - name: Comics smoke (16-level planes and the 4-level fallback)
         run: simulator/tests/cbz_smoke.sh build/sim-native/crosspoint_sim
 
+      - name: 16-level lab smoke (test card through the two-pass path)
+        run: simulator/tests/gray16_lab_smoke.sh build/sim-native/crosspoint_sim
+
       - name: File Transfer smoke (hotspot mode + real web server endpoints)
         run: |
           set -euo pipefail

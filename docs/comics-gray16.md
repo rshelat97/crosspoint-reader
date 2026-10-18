@@ -148,7 +148,8 @@ concrete sequence is in the "Phase 2" section; the SDK facts it rests on
   from the right previous image.
 
 The device HAL returns `false` from `beginGray16()` until a fine LUT has been
-set (`setGray16FineLut`), which the boot code does when the card holds one.
+set (`setGray16FineLut`), which the boot code does when the card holds one,
+and right after an Absolute-mode pass (see the Phase 2 section).
 
 ## CBZ reader
 
@@ -189,25 +190,38 @@ set (`setGray16FineLut`), which the boot code does when the card holds one.
 
 ## Phase 2: the device path and the waveform lab
 
-The X4 runs the two passes without any SDK change. Facts from the pinned SDK
-(`freeink-sdk/libs/display/FreeInkDisplay/src/`):
+The X4 runs the two passes without any SDK change. Both are factory-mode
+refreshes staged in the facade's Overlay mode; Absolute mode is never entered.
+Facts from the pinned SDK (`freeink-sdk/libs/display/FreeInkDisplay/src/`):
 
-- `beginGray16()` is `displayGrayscaleBase(GrayscaleMode::Absolute)`. The
-  facade enters Absolute mode and the driver's `beginGrayscale` shows nothing
-  for that mode (`Ssd1677Driver.cpp`, `beginGrayscale`); nothing is visible.
-- Pass 0 uploads planes 2 and 3 (the driver complements them in Absolute
-  mode) and calls `displayGrayBuffer(turnOff, nullptr, factoryMode = true)`:
-  the SDK's own factory 4-level pass (`lut_factory_quality`, 50 frames, the
-  pass used for sleep covers). It ends with the facade back in Overlay mode.
-- Pass 1 uploads planes 0 and 1 raw (Overlay-mode writes are not
-  complemented) and calls `displayGrayBuffer(turnOff, fineLut, true)`: the
-  Overlay-mode factory path accepts a custom LUT (`FreeInkDisplay.cpp`,
-  `displayGrayBuffer`) and runs it with the 0xCC activation. No base refresh
-  happens because `displayGrayscaleBase(Overlay)` is never called.
+- Absolute mode cannot carry the sequence: `displayGrayBuffer()` rejects a
+  custom LUT there, and ending an Absolute pass goes through
+  `cancelGrayscalePass()`, which sets the facade's private `_grayPassFailed`;
+  `displayGrayBuffer()` then returns early until a B/W refresh or a grayscale
+  base clears the flag (`FreeInkDisplay.cpp`, `displayGrayBuffer` and
+  `cancelGrayscalePass`). A pass 1 after an Absolute pass 0 would upload its
+  planes and never run a waveform.
+- `beginGray16()` has no display side effect: it only arms the HAL's pass
+  state. It returns false without a fine LUT and right after an Absolute-mode
+  pass (an XTC image or a sleep cover) until the next B/W refresh, so callers
+  take the 4-level path, whose base refresh clears the SDK flag.
+- Pass 0: planes 2 and 3 go up through `writeGrayscalePlaneStrip` from a
+  240-byte stack chunk, complemented by the HAL, because the factory LUT
+  selects black at raw 11 and white at raw 00 while Overlay-mode writes are
+  raw. Then `displayGrayBuffer(turnOff, nullptr, factoryMode = true)` runs
+  the board's own factory 4-level LUT (`lut_factory_quality` on the X4, 50
+  frames, the pass used for sleep covers) with the 0xCC activation.
+- Pass 1: planes 0 and 1 go up raw, then `displayGrayBuffer(turnOff, fineLut,
+  true)` runs the fine LUT the same way. No base refresh happens between the
+  passes because `displayGrayscaleBase(Overlay)` is never called.
 - `endGray16(bw)` is `cleanupGrayscaleBuffers(bw)`: the B/W baseline goes to
   RED RAM. Both factory passes set the driver's `_needsGrayClear`, so the next
   Fast refresh is promoted to a Half/Full clean (one flash on the next page
   turn, as after a sleep cover).
+- Cost of the complement: about 240 strip writes per coarse plane on the X4
+  (two rows per strip). The lab logs the pass times; if the overhead matters,
+  phase 3 can replace it with a copy of the factory LUT whose VS rows are
+  swapped (0 with 3, 1 with 2) so pass 0 also runs on raw planes.
 
 Only the fine LUT is new. It lives on the SD card so it can be tuned without
 reflashing; the firmware ships no default until phase 3 bakes in a tuned one.

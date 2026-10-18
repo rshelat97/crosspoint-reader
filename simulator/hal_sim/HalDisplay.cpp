@@ -176,6 +176,12 @@ void HalDisplay::endGray16(const uint8_t* bwBaseline) {
   cleanupGrayscaleBuffers(bwBaseline);
   simdisp::endGray16();
 }
+// The simulator runs no waveforms, so the fine LUT is stored but never used and
+// supportsGray16() does not depend on it.
+void HalDisplay::setGray16FineLut(const uint8_t* lut112) {
+  gray16FineLutSet = lut112 != nullptr;
+  if (lut112) memcpy(gray16FineLut, lut112, GRAY16_LUT_SIZE);
+}
 
 uint16_t HalDisplay::getDisplayWidth() const { return DISPLAY_WIDTH; }
 uint16_t HalDisplay::getDisplayHeight() const { return DISPLAY_HEIGHT; }
