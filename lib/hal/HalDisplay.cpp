@@ -10,8 +10,8 @@ namespace {
 // Coarse-pass uploads. The factory 4-level LUT selects black at 11 and white
 // at 00, the complement of the public plane encoding. Absolute mode would have
 // the driver complement, but the fine pass needs the facade's Overlay mode
-// (see beginGray16), so the planes are streamed as complemented strips from a
-// small stack chunk instead (240 two-row strips per plane on the X4).
+// (see supportsGray16), so the planes are streamed as complemented strips from
+// a small stack chunk instead (240 two-row strips per plane on the X4).
 constexpr size_t COARSE_CHUNK_BYTES = 240;
 
 void writeComplementedRows(EInkDisplay& eink, EInkDisplay::GrayPlane plane, const uint8_t* rows, uint16_t yStart,
@@ -35,13 +35,22 @@ void writeComplementedRows(EInkDisplay& eink, EInkDisplay::GrayPlane plane, cons
 HalDisplay::HalDisplay() : einkDisplay(EPD_SCLK, EPD_MOSI, EPD_CS, EPD_DC, EPD_RST, EPD_BUSY) {}
 
 // absoluteGrayPending is true from a successful displayGrayscaleBase(Absolute)
-// until the next B/W refresh or grayscale base. The SDK facade ends an Absolute
-// pass through cancelGrayscalePass(), which sets its private _grayPassFailed
-// flag, and FreeInkDisplay::displayGrayBuffer() then returns early until one of
-// those calls clears it: a 16-level sequence started in that state would upload
-// its planes but never run a waveform.
+// until the SDK is clean again. The facade ends an Absolute pass through
+// cancelGrayscalePass(), which sets its private _grayPassFailed flag, and
+// FreeInkDisplay::displayGrayBuffer() then returns early until a B/W refresh or
+// a grayscale base clears it: a 16-level sequence started in that state would
+// upload its planes but never run a waveform. The driver's own complement flag
+// (_absoluteInput) is cleared only by a pass that ran or by an Overlay base, so
+// after an aborted pass (a failed image decode) a B/W refresh is not enough:
+// the coarse planes would be complemented twice.
 void HalDisplay::noteBwRefresh() {
+  if (absoluteGrayRan) absoluteGrayPending = false;
+  gray16Stage = Gray16Stage::Idle;
+}
+
+void HalDisplay::noteOverlayBase() {
   absoluteGrayPending = false;
+  absoluteGrayRan = false;
   gray16Stage = Gray16Stage::Idle;
 }
 
@@ -152,7 +161,10 @@ bool HalDisplay::displayGrayscaleBase(GrayscaleMode mode, RefreshMode fallback, 
   gray16Stage = Gray16Stage::Idle;
   const bool ok =
       einkDisplay.displayGrayscaleBase(mode, static_cast<EInkDisplay::RefreshMode>(fallback), turnOffScreen);
-  if (ok) absoluteGrayPending = mode == GrayscaleMode::Absolute;
+  if (ok) {
+    absoluteGrayPending = mode == GrayscaleMode::Absolute;
+    absoluteGrayRan = false;
+  }
   return ok;
 }
 
@@ -177,7 +189,7 @@ void HalDisplay::displayGrayscaleBase(RefreshMode fallback, bool turnOffScreen) 
     einkDisplay.requestResync(1);
   }
 
-  noteBwRefresh();
+  noteOverlayBase();
   einkDisplay.displayGrayscaleBase(convertRefreshMode(fallback), turnOffScreen);
 }
 
@@ -208,7 +220,11 @@ void HalDisplay::cleanupGrayscaleBuffers(const uint8_t* bwBuffer) {
   einkDisplay.cleanupGrayscaleBuffers(bwBuffer);
 }
 
-void HalDisplay::displayGrayBuffer(bool turnOffScreen) { einkDisplay.displayGrayBuffer(turnOffScreen); }
+void HalDisplay::displayGrayBuffer(bool turnOffScreen) {
+  // An Absolute pass that reaches the driver also clears its complement flag.
+  if (absoluteGrayPending) absoluteGrayRan = true;
+  einkDisplay.displayGrayBuffer(turnOffScreen);
+}
 
 void HalDisplay::writeGrayscalePlaneStrip(bool lsbPlane, const uint8_t* rows, uint16_t yStart, uint16_t numRows) {
   const auto plane = lsbPlane ? EInkDisplay::GRAY_PLANE_LSB : EInkDisplay::GRAY_PLANE_MSB;
@@ -229,10 +245,14 @@ bool HalDisplay::combinesGrayscaleBase() const { return grayscaleCapabilities().
 // Absolute pass leaves the facade refusing further grayscale passes until a
 // B/W refresh (absoluteGrayPending).
 bool HalDisplay::supportsGray16() const {
-  // The Absolute capability marks the controllers whose factory 4-level pass
-  // is verified; Overlay staging carries both passes and strip uploads carry
-  // the coarse complement. Inverted output reports no capabilities at all.
-  return gray16FineLutSet && grayscaleCapabilities(GrayscaleMode::Absolute).supported() &&
+  // The factory pass and the fine LUT are SSD1677 waveforms: the X3's UC8253
+  // and the UC8279 advertise the same capabilities but ignore custom LUTs.
+  // Overlay staging carries both passes, strip uploads carry the coarse
+  // complement (whose chunk must hold a row), and the Absolute capability
+  // marks a verified factory pass. Inverted output reports no capabilities.
+  return gray16FineLutSet && getController() == Controller::SSD1677 &&
+         einkDisplay.getDisplayWidthBytes() <= COARSE_CHUNK_BYTES &&
+         grayscaleCapabilities(GrayscaleMode::Absolute).supported() &&
          grayscaleCapabilities(GrayscaleMode::Overlay).supported() && supportsStripGrayscale();
 }
 
@@ -246,12 +266,14 @@ void HalDisplay::displayGray16Pass(uint8_t pass, bool turnOffScreen) {
   switch (pass) {
     case 0:
       // The board's own factory 4-level pass (lut == nullptr) on the complemented planes.
+      if (gray16Stage != Gray16Stage::Coarse) break;  // no beginGray16(): planes are raw
       einkDisplay.displayGrayBuffer(turnOffScreen, nullptr, /*factoryMode=*/true);
       gray16Stage = Gray16Stage::Fine;
       break;
     case 1:
       // The driver reads the LUT with pgm_read_byte, a plain byte load on ESP32, so RAM is fine.
-      if (gray16FineLutSet) einkDisplay.displayGrayBuffer(turnOffScreen, gray16FineLut, /*factoryMode=*/true);
+      if (gray16Stage != Gray16Stage::Fine || !gray16FineLutSet) break;  // no coarse pass before it
+      einkDisplay.displayGrayBuffer(turnOffScreen, gray16FineLut, /*factoryMode=*/true);
       break;
     default:
       break;

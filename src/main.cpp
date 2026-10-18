@@ -694,6 +694,7 @@ void setup() {
   setupDisplayAndFonts(resume != BootResume::Splash);
 
   // Opt-in 16-level pages: a fine-pass LUT on the card enables the two-pass path.
+  static_assert(gray16lut::LUT_SIZE == HalDisplay::GRAY16_LUT_SIZE, "fine LUT size contract");
   uint8_t gray16Lut[gray16lut::LUT_SIZE];
   if (gray16lut::loadFromStorage(gray16Lut) != gray16lut::Source::None) display.setGray16FineLut(gray16Lut);
 

@@ -2,6 +2,8 @@
 
 #include <Arduino.h>
 #include <GfxRenderer.h>
+#include <HalMemory.h>
+#include <HalStorage.h>
 #include <I18n.h>
 #include <Logging.h>
 
@@ -11,6 +13,8 @@
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+
+static_assert(gray16lut::LUT_SIZE == HalDisplay::GRAY16_LUT_SIZE, "fine LUT size contract");
 
 namespace {
 constexpr const char* TAG = "G16LAB";
@@ -34,20 +38,26 @@ void logHex(const char* name, const uint8_t* bytes, const size_t len) {
   LOG_INF(TAG, "  %s %s", name, hex);
 }
 
-void logRender(const char* view, const uint32_t passMs[2]) {
-  LOG_INF(TAG, "%s: pass 0 %lu ms, pass 1 %lu ms, heap %u free, %u max block", view,
-          static_cast<unsigned long>(passMs[0]), static_cast<unsigned long>(passMs[1]),
-          static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+void logRender(const char* view, const uint32_t uploadMs[2], const uint32_t passMs[2],
+               const HalMemory::HeapStats& heap) {
+  LOG_INF(
+      TAG,
+      "%s: pass 0 upload %lu ms + refresh %lu ms, pass 1 upload %lu ms + refresh %lu ms, heap %u free, %u max block",
+      view, static_cast<unsigned long>(uploadMs[0]), static_cast<unsigned long>(passMs[0]),
+      static_cast<unsigned long>(uploadMs[1]), static_cast<unsigned long>(passMs[1]),
+      static_cast<unsigned>(heap.freeBytes), static_cast<unsigned>(heap.largestBlockBytes));
 }
 }  // namespace
 
 void Gray16LabActivity::onEnter() {
   Activity::onEnter();
+  // So a file uploaded through the web file manager has somewhere to land.
+  Storage.ensureDirectoryExists(gray16lut::DIR);
   loadLut();
   requestUpdate();
 }
 
-// Back to the boot state: readers use 16 levels only when the card has a LUT.
+// Readers use 16 levels only when the card has a LUT right now.
 void Gray16LabActivity::onExit() {
   renderer.setGray16FineLut(gray16lut::loadFromStorage(lut) != gray16lut::Source::None ? lut : nullptr);
   Activity::onExit();
@@ -88,10 +98,7 @@ void Gray16LabActivity::loadLut() {
     LOG_INF(TAG, "Fine LUT: built-in default (darken %d %d %d, fr %d, vgh %02X vsh1 %02X vsh2 %02X vsl %02X vcom %02X)",
             cfg.darken[0], cfg.darken[1], cfg.darken[2], cfg.frameRate, cfg.voltages[0], cfg.voltages[1],
             cfg.voltages[2], cfg.voltages[3], cfg.voltages[4]);
-  } else {
-    LOG_INF(TAG, "Fine LUT: %s",
-            source == gray16lut::Source::RawFile ? gray16lut::RAW_LUT_PATH : gray16lut::CONFIG_PATH);
-  }
+  }  // else the loader logged the file it used
   renderer.setGray16FineLut(lut);
   // The bytes as the controller receives them (docs/comics-gray16.md, "Fine LUT format").
   logHex("VS rows", lut, 50);
@@ -102,29 +109,35 @@ void Gray16LabActivity::loadLut() {
 void Gray16LabActivity::render(RenderLock&&) {
   const bool supported = renderer.supportsGray16();
   if (!supported || !renderer.beginGray16()) {
-    // The HAL refuses a sequence until a B/W refresh follows an Absolute-mode
-    // pass; the plain screen below is that refresh, so Confirm retries.
+    // The HAL refuses a sequence after an Absolute-mode pass until the SDK is
+    // clean again; the plain screen below is a B/W refresh, so Confirm retries.
     if (supported) LOG_INF(TAG, "16-level sequence refused; press Confirm to retry");
-    renderUnsupported();
+    renderUnsupported(supported);
     return;
   }
   const Layout layout = makeLayout();
   const uint8_t passCount = coarseOnly ? 1 : 2;
+  uint32_t uploadMs[2] = {0, 0};
   uint32_t passMs[2] = {0, 0};
   for (uint8_t pass = 0; pass < passCount; pass++) {
     const uint8_t low = pass == 0 ? 2 : 0;
+    // Uploads are timed too: the coarse planes go up as complemented strips.
     drawPlane(layout, low);
+    uint32_t start = millis();
     renderer.copyGrayscaleLsbBuffers();
+    uploadMs[pass] = millis() - start;
     drawPlane(layout, low + 1);
+    start = millis();
     renderer.copyGrayscaleMsbBuffers();
-    const uint32_t start = millis();
+    uploadMs[pass] += millis() - start;
+    start = millis();
     renderer.displayGray16Pass(pass);
     passMs[pass] = millis() - start;
   }
   // Plane 3 is the B/W approximation endGray16() keeps as the next baseline.
   drawPlane(layout, 3);
   renderer.endGray16();
-  logRender(coarseOnly ? "coarse pass only" : "full card", passMs);
+  logRender(coarseOnly ? "coarse pass only" : "full card", uploadMs, passMs, HalMemory::getInternalHeap());
 }
 
 Gray16LabActivity::Layout Gray16LabActivity::makeLayout() const {
@@ -190,16 +203,17 @@ void Gray16LabActivity::drawFooter(const Layout& l) const {
   renderer.drawText(SMALL_FONT_ID, PAD, y + l.footerLine, tr(STR_GRAY16_LAB_HINT), true);
 }
 
-// Other panels and the simulator with CROSSPOINT_SIM_NO_GRAY16: plain B/W.
-void Gray16LabActivity::renderUnsupported() const {
-  LOG_INF(TAG, "16-level path unsupported on this panel");
+// Other panels and the simulator with CROSSPOINT_SIM_NO_GRAY16: plain B/W. A
+// refused sequence on a supported panel shows the hint instead (Confirm retries).
+void Gray16LabActivity::renderUnsupported(const bool refused) const {
+  if (!refused) LOG_INF(TAG, "16-level path unsupported on this panel");
   const auto& metrics = UITheme::getInstance().getMetrics();
   const int width = renderer.getScreenWidth();
   const int height = renderer.getScreenHeight();
   renderer.clearScreen();
   GUI.drawHeader(renderer, Rect{0, metrics.topPadding, width, metrics.headerHeight}, tr(STR_GRAY16_LAB));
-  renderer.drawCenteredText(UI_10_FONT_ID, height / 2 - 20, tr(STR_GRAY16_UNSUPPORTED), true, EpdFontFamily::BOLD);
-  renderer.drawCenteredText(SMALL_FONT_ID, height / 2 + 10, tr(STR_GRAY16_LAB_HINT), true);
+  renderer.drawCenteredText(UI_10_FONT_ID, height / 2 - 20,
+                            refused ? tr(STR_GRAY16_LAB_HINT) : tr(STR_GRAY16_UNSUPPORTED), true, EpdFontFamily::BOLD);
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "");
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   renderer.displayBuffer();

@@ -115,7 +115,7 @@ Key design points:
   pages run the two-pass model from `docs/comics-gray16.md`: a coarse pass
   from white, then a fine pass, ending at brightness × 17. Set
   `CROSSPOINT_SIM_NO_GRAY16=1` (native build only) to force the 4-level
-  fallback the device uses today.
+  fallback the device uses without a fine waveform file.
 - **Input contract mirrors `InputManager`**: frame-scoped pressed/released
   edges, tap slop, swipe thresholds and hold timing are recomputed per
   `update()` just like the freeink SDK, and touch coordinates are fed

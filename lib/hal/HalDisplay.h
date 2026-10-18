@@ -164,12 +164,15 @@ class HalDisplay {
   uint8_t gray16FineLut[GRAY16_LUT_SIZE]{};
   bool gray16FineLutSet = false;
   // Device 16-level sequence state: which pass the next plane uploads belong
-  // to, and whether the SDK still refuses grayscale passes after an
-  // Absolute-mode pass (cleared by the next B/W refresh or grayscale base).
+  // to; whether an Absolute-mode pass was started (the SDK then refuses
+  // grayscale passes until a B/W refresh, and its driver keeps complementing
+  // uploads until a pass or an Overlay base runs); and whether that pass ran.
   enum class Gray16Stage : uint8_t { Idle, Coarse, Fine };
   Gray16Stage gray16Stage = Gray16Stage::Idle;
   bool absoluteGrayPending = false;
+  bool absoluteGrayRan = false;
   void noteBwRefresh();
+  void noteOverlayBase();
 };
 
 extern HalDisplay display;

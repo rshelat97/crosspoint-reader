@@ -647,7 +647,7 @@ STR_BT_LOW_MEMORY: "Bluetooth: not enough memory"
 STR_BT_HOLD: "hold"
 STR_BT_MAPPING_CLEARED: "Mapping cleared"
 
-STR_GRAY16_LAB: "16-level lab"
+STR_GRAY16_LAB: "16-Level Lab"
 STR_GRAY16_LAB_HINT: "Edit /.crosspoint/gray16/fine.cfg, then press Confirm"
 STR_GRAY16_UNSUPPORTED: "16 levels are not supported on this panel"
 STR_GRAY16_LUT_SOURCE: "Fine LUT:"

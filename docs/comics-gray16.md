@@ -123,10 +123,11 @@ setting like the existing grayscale uploads do; they never call `HalDisplay`
 directly. `endGray16` owns the cleanup of the grayscale buffers, so the
 16-level path does not call `cleanupGrayscaleWithFrameBuffer`.
 
-Device: each pass is one SDK factory grayscale refresh with a coarse or fine
-LUT. Both LUTs are absolute: they drive every pixel class to its target from
-whatever ink the previous page left, like the SDK's existing Absolute 4-level
-pass, so no white flush is needed and a page costs exactly two refreshes. The
+Device: each pass is one SDK factory grayscale refresh. The coarse pass runs
+the SDK's factory 4-level LUT, which is absolute: it drives every pixel class
+to its target from whatever ink the previous page left, so no white flush is
+needed. The fine pass is relative: a few extra frames on top of the coarse
+result, class by class. A page therefore costs exactly two refreshes. The
 concrete sequence is in the "Phase 2" section; the SDK facts it rests on
 (`freeink-sdk/libs/display/FreeInkDisplay/src/`):
 
@@ -202,9 +203,13 @@ Facts from the pinned SDK (`freeink-sdk/libs/display/FreeInkDisplay/src/`):
   `cancelGrayscalePass`). A pass 1 after an Absolute pass 0 would upload its
   planes and never run a waveform.
 - `beginGray16()` has no display side effect: it only arms the HAL's pass
-  state. It returns false without a fine LUT and right after an Absolute-mode
-  pass (an XTC image or a sleep cover) until the next B/W refresh, so callers
-  take the 4-level path, whose base refresh clears the SDK flag.
+  state. It returns false without a fine LUT, on any controller other than the
+  SSD1677 (the X3's UC8253 and the UC8279 advertise the same capabilities but
+  ignore custom LUTs), and right after an Absolute-mode pass (a BMP image, an
+  EPUB image page or the sleep cover) until the next B/W refresh, so callers
+  take the 4-level path. An Absolute pass that was started but never ran (a
+  failed image decode) keeps the refusal until the next grayscale base, because
+  the driver would otherwise complement the coarse planes a second time.
 - Pass 0: planes 2 and 3 go up through `writeGrayscalePlaneStrip` from a
   240-byte stack chunk, complemented by the HAL, because the factory LUT
   selects black at raw 11 and white at raw 00 while Overlay-mode writes are
@@ -218,13 +223,16 @@ Facts from the pinned SDK (`freeink-sdk/libs/display/FreeInkDisplay/src/`):
   RED RAM. Both factory passes set the driver's `_needsGrayClear`, so the next
   Fast refresh is promoted to a Half/Full clean (one flash on the next page
   turn, as after a sleep cover).
-- Cost of the complement: about 240 strip writes per coarse plane on the X4
-  (two rows per strip). The lab logs the pass times; if the overhead matters,
-  phase 3 can replace it with a copy of the factory LUT whose VS rows are
-  swapped (0 with 3, 1 with 2) so pass 0 also runs on raw planes.
+- Cost of the complement: 240 strip writes per coarse plane on the X4 (two
+  rows per strip), an estimated 35-40 ms per plane on the 10 MHz display SPI,
+  so about 75 ms per page. The lab logs upload and refresh times separately;
+  if the overhead matters, phase 3 can replace it with a copy of the factory
+  LUT whose VS rows are swapped (0 with 3, 1 with 2) so pass 0 also runs on
+  raw planes (per board: Metalio ships its own factory LUT).
 
 Only the fine LUT is new. It lives on the SD card so it can be tuned without
-reflashing; the firmware ships no default until phase 3 bakes in a tuned one.
+reflashing; the firmware ships no default for readers until phase 3 bakes in
+a tuned one (the lab has a built-in starting point).
 
 ### Fine LUT format
 
@@ -257,36 +265,54 @@ vsl = 0x32
 vcom = 0x30
 ```
 
-`darken` gives VSH1 frames for the classes v = 2, 1, 0; a negative value uses
-VSL frames instead (lighten). The builder sorts the magnitudes and spreads them
-over up to three timing groups (phase A only, RP 0), so a class drives in every
-group up to its own length. All other phases are VSS.
+`darken` gives VSH1 frames (-31..31) for the classes v = 2, 1, 0; a negative
+value uses VSL frames instead (lighten). The builder sorts the magnitudes and
+spreads them over up to three timing groups (phase A only, RP 0), so a class
+drives in every group up to its own length. All other phases are VSS.
+
+Safety: the five voltage codes must stay inside the SSD1677's documented
+ranges (VGH `0x03..0x17`, VSH1/VSH2 `0x23..0x50` or `0x8E..0xCE`, VSL
+`0x0A..0x3A`, VCOM `0x08..0x78`); a raw `fine.lut` must also pass those
+checks and may not exceed 255 frames in total. A file that fails, or a config
+over 512 bytes, is rejected with an `ERR` line (origin `G16`) in the boot log,
+the device stays on the 4-level path, and the lab footer reads "built-in
+default".
 
 Opt-in: at boot the firmware loads the file if present and gives the LUT to
-`HalDisplay::setGray16FineLut`; from then on `supportsGray16()` is true on the
-X4 and the CBZ reader shows 16 levels. Without a file the device stays on the
-4-level path. Other panels never report support (no Absolute mode).
+`HalDisplay::setGray16FineLut`; from then on `supportsGray16()` is true on
+SSD1677 boards (X4, the SSD1677 X4 Pro batch, Sticky, Picco, Metalio) and the
+CBZ reader uses the two-pass path. Until a tuned waveform exists the result is
+experimental. Without a file the device stays on the 4-level path, and other
+controllers never report support. The default voltage tail is the X4's;
+Metalio boards tune VSH1 and VCOM differently in their factory LUT, so set
+`vsh1` and `vcom` from `lut_factory_quality_metalio` there.
 
 ### The lab screen
 
-Settings > General > "16-level lab". It draws a test card through the two-pass
+Settings > General > "16-Level Lab". It draws a test card through the two-pass
 path: 16 vertical bands (levels 0..15, labelled) in the upper part and a 4 x 4
 grid in the lower part (rows = coarse level, columns = fine class) so the
 size of the fine steps can be compared across coarse levels. Confirm reloads
 `fine.cfg` / `fine.lut` and redraws (a built-in default is used when no file
 exists, so the lab works on a fresh card); Left/Right switch between the full
-card and a coarse-only reference (pass 0 alone); Back exits and restores the
-boot state, so readers use 16 levels only when the file exists. The serial log
-(`INF`) prints the LUT source, the config values, each pass's duration and the
-free heap.
+card and a coarse-only reference (pass 0 alone); Back exits and reloads the
+card's LUT (or clears it when no file exists), so readers use 16 levels only
+when the file exists. The serial log (`INF`) prints the LUT source, the config
+values, each pass's upload and refresh time and the free heap.
 
-Iteration loop: edit `fine.cfg` on a computer, upload it to
-`/.crosspoint/gray16/` through the web file manager (or move the card), open
-the lab, press Confirm, photograph the card. Aim for 16 bands that are
-monotonic and evenly spaced. If the three steps have different sizes depending
-on the coarse level (a physical property of the ink; pass 1 cannot tell the
-coarse levels apart), phase 3 adds a measured tone curve in the Gray16 writer
-so the dither targets the levels the panel actually produces.
+Iteration loop: edit `fine.cfg` on a computer and get it into
+`/.crosspoint/gray16/`: either move the card, or use the web file manager
+with "Show Hidden Files" turned on in Settings (the lab creates the folder
+the first time it opens; delete the previous `fine.cfg` before uploading,
+because the uploader refuses an existing name). Open the lab, press Confirm,
+photograph the card. Aim for 16 bands that are monotonic and evenly spaced.
+If the two middle fine steps come out swapped inside every coarse band, the
+row mapping is the culprit: swap the first two entries of `ROW_OF_CLASS` in
+`src/util/Gray16Lut.cpp` rather than re-tuning. If the three steps have
+different sizes depending on the coarse level (a physical property of the
+ink; pass 1 cannot tell the coarse levels apart), phase 3 adds a measured tone
+curve in the Gray16 writer so the dither targets the levels the panel actually
+produces.
 
 ## Costs and limits
 
@@ -296,7 +322,7 @@ so the dither targets the levels the panel actually produces.
   directory, then read that BMP back row by row, dither and write the planes:
   three SD passes over the page plus the decode. Not measured yet; a large
   scan (a 2000 px wide JPEG) is expected to take 5-12 s on the X4. Candidates
-  for phase 2 if that is too slow: stream the decoder's rows straight into the
+  for a later phase if that is too slow: stream the decoder's rows straight into the
   dither through a `Print` adapter (saves the BMP round trip), use JPEGDEC's
   1/2..1/8 scaling for oversized pages, and decode stored (uncompressed) ZIP
   entries in place instead of extracting them.
@@ -319,6 +345,13 @@ so the dither targets the levels the panel actually produces.
   progress percentage from a page index and count.
 - `test/sim_display`: the simulator's absolute-plane and two-pass luminance
   model (`g * 17`).
+- `test/gray16lut`: the `fine.cfg` parser (keys, ranges, voltage codes,
+  errors), the LUT builder's byte layout, `validateLut`, and the loader's
+  precedence and fallbacks against an in-memory card.
+- `simulator/tests/gray16_lab_smoke.sh` (run by the `native-smoke` CI job):
+  opens the lab, checks the exact 16 luminances on the bands and the grid,
+  the coarse-only reference, a Confirm reload, Back, and the unsupported
+  screen with `CROSSPOINT_SIM_NO_GRAY16=1`.
 - `simulator/tests/cbz_smoke.sh` (run by the `native-smoke` CI job): builds
   a fixture `.cbz` with `cbz_fixture.py` (16-step gradient, a small page that
   gets letterboxed, real JPEG/PNG pages and junk entries), opens it in the

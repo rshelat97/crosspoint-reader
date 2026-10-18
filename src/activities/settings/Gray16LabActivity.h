@@ -5,10 +5,11 @@
 #include "activities/Activity.h"
 #include "util/Gray16Lut.h"
 
-// Settings > General > "16-level lab": a grayscale test card drawn through the
+// Settings > General > "16-Level Lab": a grayscale test card drawn through the
 // two-pass 16-level path, for tuning the fine-pass waveform from the SD card
 // (docs/comics-gray16.md, "The lab screen"). Confirm reloads the LUT, Left /
-// Right toggle a coarse-only reference, Back restores the boot state.
+// Right toggle a coarse-only reference, Back reloads the card's LUT (or clears
+// it) so readers only use 16 levels when a file exists.
 class Gray16LabActivity final : public Activity {
  public:
   Gray16LabActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
@@ -35,7 +36,7 @@ class Gray16LabActivity final : public Activity {
   void drawPlane(const Layout& l, uint8_t plane) const;
   void drawLabel(const Layout& l, int slotX, int y, int slotWidth, const char* text) const;
   void drawFooter(const Layout& l) const;
-  void renderUnsupported() const;
+  void renderUnsupported(bool refused) const;
   const char* sourceLabel() const;
 
   uint8_t lut[gray16lut::LUT_SIZE] = {};

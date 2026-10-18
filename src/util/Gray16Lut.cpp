@@ -23,6 +23,26 @@ constexpr uint8_t PHASE_A_VSL = 0x02 << 6;
 // is (BW-RAM bit << 1) | RED-RAM bit and pass 1 writes LSB to BW, MSB to RED.
 constexpr uint8_t ROW_OF_CLASS[3] = {1, 2, 0};
 
+constexpr int MAX_DARKEN = 31;
+constexpr unsigned MAX_WAVEFORM_FRAMES = 255;
+
+// Documented SSD1677 register ranges (VGH 0x03, VSH1/VSH2 and VSL 0x04, VCOM
+// 0x2C); other codes are reserved and the registers keep their value until
+// the next OTP-sequence refresh, so a bad file must never reach the panel.
+bool voltageCodeValid(size_t index, uint8_t code) {
+  switch (index) {
+    case 0:
+      return code >= 0x03 && code <= 0x17;  // VGH 10..20 V
+    case 1:
+    case 2:
+      return (code >= 0x23 && code <= 0x50) || (code >= 0x8E && code <= 0xCE);  // VSH 9..18 V or 2.4..8.8 V
+    case 3:
+      return code >= 0x0A && code <= 0x3A;  // VSL -5..-17 V
+    default:
+      return code >= 0x08 && code <= 0x78;  // VCOM -0.2..-3.0 V
+  }
+}
+
 // A config is a few short lines; the cap bounds the stack buffer loadFromStorage
 // uses at boot and in the lab (main loop task, no deep call chain below it).
 constexpr size_t CONFIG_MAX_BYTES = 512;
@@ -103,7 +123,7 @@ bool applyKey(const char* key, const char* keyEnd, const char* v, const char* en
               const char** reason) {
   int values[3];
   if (keyIs(key, keyEnd, "darken")) {
-    if (!readValues(v, end, 3, -127, 127, values, reason)) return false;
+    if (!readValues(v, end, 3, -MAX_DARKEN, MAX_DARKEN, values, reason)) return false;
     for (int i = 0; i < 3; i++) out->darken[i] = static_cast<int8_t>(values[i]);
     return true;
   }
@@ -116,6 +136,10 @@ bool applyKey(const char* key, const char* keyEnd, const char* v, const char* en
   for (int i = 0; i < 5; i++) {
     if (!keyIs(key, keyEnd, VOLTAGE_KEYS[i])) continue;
     if (!readValues(v, end, 1, 0, 255, values, reason)) return false;
+    if (!voltageCodeValid(i, static_cast<uint8_t>(values[0]))) {
+      *reason = "voltage code outside the SSD1677 range";
+      return false;
+    }
     out->voltages[i] = static_cast<uint8_t>(values[0]);
     return true;
   }
@@ -198,23 +222,49 @@ void buildLut(const FineConfig& cfg, uint8_t out[LUT_SIZE]) {
   memcpy(out + VOLTAGE_OFFSET, cfg.voltages, sizeof(cfg.voltages));
 }
 
+bool validateLut(const uint8_t lut[LUT_SIZE], char* error, size_t errorLen) {
+  if (error && errorLen) error[0] = '\0';
+  if (!lut) return false;
+  for (size_t i = 0; i < 5; i++) {
+    if (voltageCodeValid(i, lut[VOLTAGE_OFFSET + i])) continue;
+    if (error && errorLen)
+      snprintf(error, errorLen, "voltage byte %u outside the SSD1677 range", static_cast<unsigned>(i));
+    return false;
+  }
+  unsigned frames = 0;
+  for (size_t g = 0; g < 10; g++) {
+    const uint8_t* tp = lut + TP_OFFSET + g * TP_GROUP_BYTES;
+    frames += (static_cast<unsigned>(tp[0]) + tp[1] + tp[2] + tp[3]) * (static_cast<unsigned>(tp[4]) + 1);
+  }
+  if (frames > MAX_WAVEFORM_FRAMES) {
+    if (error && errorLen) snprintf(error, errorLen, "waveform is %u frames, limit %u", frames, MAX_WAVEFORM_FRAMES);
+    return false;
+  }
+  return true;
+}
+
 Source loadFromStorage(uint8_t out[LUT_SIZE]) {
   HalFile file;
+  char reason[48];
   if (Storage.exists(RAW_LUT_PATH) && Storage.openFileForRead("G16", RAW_LUT_PATH, file)) {
     uint8_t raw[LUT_SIZE];
     const size_t size = file.size();
     const bool ok = size == LUT_SIZE && file.read(raw, LUT_SIZE) == static_cast<int>(LUT_SIZE);
     file.close();
-    if (ok) {
+    if (ok && validateLut(raw, reason, sizeof(reason))) {
       memcpy(out, raw, LUT_SIZE);
       LOG_INF("G16", "Fine LUT: %s", RAW_LUT_PATH);
       return Source::RawFile;
     }
-    LOG_ERR("G16", "%s: need exactly %u bytes, have %u; trying the config", RAW_LUT_PATH,
-            static_cast<unsigned>(LUT_SIZE), static_cast<unsigned>(size));
+    if (ok) {
+      LOG_ERR("G16", "%s: %s; trying the config", RAW_LUT_PATH, reason);
+    } else {
+      LOG_ERR("G16", "%s: need exactly %u bytes, have %u; trying the config", RAW_LUT_PATH,
+              static_cast<unsigned>(LUT_SIZE), static_cast<unsigned>(size));
+    }
   }
   if (!Storage.exists(CONFIG_PATH)) {
-    LOG_INF("G16", "No fine LUT on the card; 16-level pages stay off");
+    LOG_DBG("G16", "No fine LUT on the card; 16-level pages stay off");
     return Source::None;
   }
   if (!Storage.openFileForRead("G16", CONFIG_PATH, file)) return Source::None;
@@ -229,7 +279,6 @@ Source loadFromStorage(uint8_t out[LUT_SIZE]) {
     return Source::None;
   }
   FineConfig cfg;
-  char reason[48];
   if (!parseConfig(text, size, &cfg, reason, sizeof(reason))) {
     LOG_ERR("G16", "%s: %s", CONFIG_PATH, reason);
     return Source::None;

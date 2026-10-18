@@ -103,12 +103,12 @@ TEST(Gray16LutParse, SkipsCommentsBlankLinesAndCrLf) {
 }
 
 TEST(Gray16LutParse, LastLineWithoutNewlineAndExtremeValues) {
-  const Parsed p = parse("darken = -127 127 0\nvcom = 255\nvgh = 0");
+  const Parsed p = parse("darken = -31 31 0\nvcom = 0x78\nvgh = 3");
   ASSERT_TRUE(p.ok) << p.error;
-  EXPECT_EQ(p.cfg.darken[0], -127);
-  EXPECT_EQ(p.cfg.darken[1], 127);
-  EXPECT_EQ(p.cfg.voltages[4], 255);
-  EXPECT_EQ(p.cfg.voltages[0], 0);
+  EXPECT_EQ(p.cfg.darken[0], -31);
+  EXPECT_EQ(p.cfg.darken[1], 31);
+  EXPECT_EQ(p.cfg.voltages[4], 0x78);
+  EXPECT_EQ(p.cfg.voltages[0], 3);
 }
 
 TEST(Gray16LutParse, RejectsUnknownKey) {
@@ -133,8 +133,9 @@ TEST(Gray16LutParse, RejectsWrongDarkenCount) {
 }
 
 TEST(Gray16LutParse, RejectsOutOfRangeValues) {
+  EXPECT_FALSE(parse("darken = 32 0 0\n").ok);
+  EXPECT_FALSE(parse("darken = 0 -32 0\n").ok);
   EXPECT_FALSE(parse("darken = 128 0 0\n").ok);
-  EXPECT_FALSE(parse("darken = 0 -128 0\n").ok);
   EXPECT_FALSE(parse("fr = 16\n").ok);
   EXPECT_FALSE(parse("fr = -1\n").ok);
   EXPECT_FALSE(parse("vcom = 256\n").ok);
@@ -143,6 +144,54 @@ TEST(Gray16LutParse, RejectsOutOfRangeValues) {
   const Parsed p = parse("vgh = 0x100\n");
   EXPECT_FALSE(p.ok);
   EXPECT_NE(p.error.find("out of range"), std::string::npos) << p.error;
+}
+
+TEST(Gray16LutParse, RejectsVoltageCodesOutsideTheControllerRanges) {
+  EXPECT_FALSE(parse("vgh = 0x02\n").ok);
+  EXPECT_FALSE(parse("vgh = 0x18\n").ok);
+  EXPECT_FALSE(parse("vsh1 = 0x22\n").ok);
+  EXPECT_FALSE(parse("vsh1 = 0x51\n").ok);
+  EXPECT_FALSE(parse("vsh2 = 0x8D\n").ok);
+  EXPECT_FALSE(parse("vsh2 = 0xCF\n").ok);
+  EXPECT_FALSE(parse("vsl = 0x09\n").ok);
+  EXPECT_FALSE(parse("vsl = 0x3B\n").ok);
+  EXPECT_FALSE(parse("vcom = 0x07\n").ok);
+  const Parsed p = parse("vcom = 0x79\n");
+  EXPECT_FALSE(p.ok);
+  EXPECT_NE(p.error.find("SSD1677"), std::string::npos) << p.error;
+  // Both documented VSH bands are accepted.
+  EXPECT_TRUE(parse("vsh1 = 0x23\nvsh2 = 0xCE\n").ok);
+}
+
+TEST(Gray16LutBuild, ValidateLutAcceptsBuilderOutput) {
+  char error[64] = "x";
+  EXPECT_TRUE(gray16lut::validateLut(build(FineConfig{}).data(), error, sizeof(error)));
+  EXPECT_EQ(error[0], '\0');
+  FineConfig longest;
+  longest.darken[0] = 31;
+  longest.darken[1] = -31;
+  longest.darken[2] = 31;
+  EXPECT_TRUE(gray16lut::validateLut(build(longest).data(), error, sizeof(error)));
+  EXPECT_TRUE(gray16lut::validateLut(build(parse(FULL_CONFIG).cfg).data(), nullptr, 0));
+}
+
+TEST(Gray16LutBuild, ValidateLutRejectsBadVoltageAndLongWaveform) {
+  char error[64];
+  Lut lut = expectedDefaultLut();
+  lut[109] = 0x79;  // VCOM below -3.0 V
+  EXPECT_FALSE(gray16lut::validateLut(lut.data(), error, sizeof(error)));
+  EXPECT_NE(std::string(error).find("voltage byte 4"), std::string::npos) << error;
+  lut = expectedDefaultLut();
+  lut[106] = 0x60;  // VSH1 in the reserved gap
+  EXPECT_FALSE(gray16lut::validateLut(lut.data(), nullptr, 0));
+  lut = expectedDefaultLut();
+  lut[50] = 200;  // group 0: 200 frames
+  lut[54] = 1;    // repeated once -> 400 + 5 frames
+  EXPECT_FALSE(gray16lut::validateLut(lut.data(), error, sizeof(error)));
+  EXPECT_NE(std::string(error).find("frames"), std::string::npos) << error;
+  lut[54] = 0;  // 200 + 2 + 3 = 205 frames: allowed
+  EXPECT_TRUE(gray16lut::validateLut(lut.data(), error, sizeof(error)));
+  EXPECT_FALSE(gray16lut::validateLut(nullptr, nullptr, 0));
 }
 
 TEST(Gray16LutParse, RejectsMalformedNumbers) {
@@ -239,9 +288,14 @@ class Gray16LutStorageTest : public ::testing::Test {
  protected:
   void SetUp() override { Storage.reset(); }
 
+  // A valid raw LUT with recognisable VS bytes: the builder's timing and the
+  // factory voltage tail, VS rows and frame-rate bytes patterned.
   static std::vector<uint8_t> rawPattern(size_t size) {
+    Lut base = expectedDefaultLut();
+    for (size_t i = 0; i < 50; i++) base[i] = static_cast<uint8_t>(0xA0 + i);
+    for (size_t i = 100; i < 105; i++) base[i] = 0x33;
     std::vector<uint8_t> raw(size);
-    for (size_t i = 0; i < size; i++) raw[i] = static_cast<uint8_t>(0xA0 + i);
+    for (size_t i = 0; i < size; i++) raw[i] = i < LUT_SIZE ? base[i] : static_cast<uint8_t>(i);
     return raw;
   }
 
@@ -272,6 +326,23 @@ TEST_F(Gray16LutStorageTest, WrongSizeRawFileFallsBackToConfig) {
   out.fill(0);
   EXPECT_EQ(gray16lut::loadFromStorage(out.data()), Source::Config);
   EXPECT_EQ(out, build(parse(FULL_CONFIG).cfg));
+}
+
+TEST_F(Gray16LutStorageTest, UnsafeRawFileFallsBackToConfig) {
+  std::vector<uint8_t> raw = rawPattern(LUT_SIZE);
+  raw[109] = 0x79;  // VCOM out of range
+  Storage.setFile(gray16lut::RAW_LUT_PATH, raw);
+  Storage.setFile(gray16lut::CONFIG_PATH, bytesOf(FULL_CONFIG));
+  EXPECT_EQ(gray16lut::loadFromStorage(out.data()), Source::Config);
+  EXPECT_EQ(out, build(parse(FULL_CONFIG).cfg));
+
+  raw = rawPattern(LUT_SIZE);
+  raw[50] = 255;  // 255 + 2 + 3 frames
+  Storage.setFile(gray16lut::RAW_LUT_PATH, raw);
+  Storage.remove(gray16lut::CONFIG_PATH);
+  out.fill(0xEE);
+  EXPECT_EQ(gray16lut::loadFromStorage(out.data()), Source::None);
+  for (uint8_t b : out) EXPECT_EQ(b, 0xEE);
 }
 
 TEST_F(Gray16LutStorageTest, WrongSizeRawFileAloneGivesNone) {
