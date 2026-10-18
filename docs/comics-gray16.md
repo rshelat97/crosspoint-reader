@@ -8,10 +8,11 @@ classes. Two refreshes with different waveforms (coarse, then fine) give
 pieces that make that work: the plane file format, the HAL protocol, and the
 reader behaviour.
 
-Phase 1 (this document) implements everything in the simulator and the
-firmware's host-portable code; the device HAL reports "unsupported" and the
-reader falls back to the existing 4-level path. Phase 2 adds an on-device
-waveform lab; phase 3 wires the real two-pass waveforms into the device HAL.
+Phase 1 implemented everything in the simulator and the firmware's
+host-portable code, with the device on the existing 4-level path. Phase 2 (the
+section of that name below) adds the device two-pass path, driven by a fine
+waveform file on the SD card, and a lab screen to tune it. Phase 3 bakes the
+tuned waveform into the firmware and adds a measured tone curve.
 
 ## Data flow
 
@@ -122,11 +123,11 @@ setting like the existing grayscale uploads do; they never call `HalDisplay`
 directly. `endGray16` owns the cleanup of the grayscale buffers, so the
 16-level path does not call `cleanupGrayscaleWithFrameBuffer`.
 
-Device (phase 3): each pass is one SDK grayscale refresh with a coarse or fine
-LUT. Both LUTs must be absolute: they drive every pixel class to its target
-from whatever ink the previous page left, like the SDK's existing Absolute
-4-level pass, so no white flush is needed and a page costs exactly two
-refreshes. Facts to design against, from the pinned SDK
+Device: each pass is one SDK factory grayscale refresh with a coarse or fine
+LUT. Both LUTs are absolute: they drive every pixel class to its target from
+whatever ink the previous page left, like the SDK's existing Absolute 4-level
+pass, so no white flush is needed and a page costs exactly two refreshes. The
+concrete sequence is in the "Phase 2" section; the SDK facts it rests on
 (`freeink-sdk/libs/display/FreeInkDisplay/src/`):
 
 - `FreeInkDisplay::displayGrayBuffer(turnOffScreen, lut, factoryMode)` is the
@@ -146,7 +147,8 @@ refreshes. Facts to design against, from the pinned SDK
   ink state. `endGray16(bw)` re-uploads the B/W baseline so that clean starts
   from the right previous image.
 
-Until phase 3 lands the device HAL returns `false` from `beginGray16()`.
+The device HAL returns `false` from `beginGray16()` until a fine LUT has been
+set (`setGray16FineLut`), which the boot code does when the card holds one.
 
 ## CBZ reader
 
@@ -185,6 +187,93 @@ Until phase 3 lands the device HAL returns `false` from `beginGray16()`.
   file, unsupported JPEG variant) shows a page error; the rest of the book
   stays readable.
 
+## Phase 2: the device path and the waveform lab
+
+The X4 runs the two passes without any SDK change. Facts from the pinned SDK
+(`freeink-sdk/libs/display/FreeInkDisplay/src/`):
+
+- `beginGray16()` is `displayGrayscaleBase(GrayscaleMode::Absolute)`. The
+  facade enters Absolute mode and the driver's `beginGrayscale` shows nothing
+  for that mode (`Ssd1677Driver.cpp`, `beginGrayscale`); nothing is visible.
+- Pass 0 uploads planes 2 and 3 (the driver complements them in Absolute
+  mode) and calls `displayGrayBuffer(turnOff, nullptr, factoryMode = true)`:
+  the SDK's own factory 4-level pass (`lut_factory_quality`, 50 frames, the
+  pass used for sleep covers). It ends with the facade back in Overlay mode.
+- Pass 1 uploads planes 0 and 1 raw (Overlay-mode writes are not
+  complemented) and calls `displayGrayBuffer(turnOff, fineLut, true)`: the
+  Overlay-mode factory path accepts a custom LUT (`FreeInkDisplay.cpp`,
+  `displayGrayBuffer`) and runs it with the 0xCC activation. No base refresh
+  happens because `displayGrayscaleBase(Overlay)` is never called.
+- `endGray16(bw)` is `cleanupGrayscaleBuffers(bw)`: the B/W baseline goes to
+  RED RAM. Both factory passes set the driver's `_needsGrayClear`, so the next
+  Fast refresh is promoted to a Half/Full clean (one flash on the next page
+  turn, as after a sleep cover).
+
+Only the fine LUT is new. It lives on the SD card so it can be tuned without
+reflashing; the firmware ships no default until phase 3 bakes in a tuned one.
+
+### Fine LUT format
+
+112 bytes, the SSD1677 layout the SDK already uses: five VS rows of 10 bytes
+(10 timing groups; each byte holds the four phases A-D of one group, 2 bits
+per phase: `00` VSS, `01` VSH1, `10` VSL, `11` VSH2), then 10 groups of
+`TPA, TPB, TPC, TPD, RP`, then 5 frame-rate bytes (two 4-bit codes each),
+then `VGH, VSH1, VSH2, VSL, VCOM` and two reserved bytes. From the factory
+LUT's rows, VSH1 drives toward black and VSL toward white.
+
+VS rows are in controller order: row index `= (BW-RAM bit << 1) | RED-RAM
+bit`. Pass 1 writes the LSB plane to BW RAM and the MSB plane to RED RAM, so
+the public value `v = (MSB << 1) | LSB` lands on row 3 for v = 3 (no change),
+row 1 for v = 2, row 2 for v = 1 and row 0 for v = 0.
+
+### Files on the card
+
+`/.crosspoint/gray16/fine.cfg` (text) or `/.crosspoint/gray16/fine.lut` (raw
+112 bytes; wins when both exist). The config is turned into a LUT by
+`src/util/Gray16Lut.cpp`:
+
+```
+# extra frames after the coarse pass for the classes needing 1, 2, 3 steps
+darken = 2 4 7
+fr = 2          # frame-rate code 0-15, all groups (the factory pass uses 2)
+vgh = 0x17      # voltage tail; defaults are the X4 factory values
+vsh1 = 0x41
+vsh2 = 0xA8
+vsl = 0x32
+vcom = 0x30
+```
+
+`darken` gives VSH1 frames for the classes v = 2, 1, 0; a negative value uses
+VSL frames instead (lighten). The builder sorts the magnitudes and spreads them
+over up to three timing groups (phase A only, RP 0), so a class drives in every
+group up to its own length. All other phases are VSS.
+
+Opt-in: at boot the firmware loads the file if present and gives the LUT to
+`HalDisplay::setGray16FineLut`; from then on `supportsGray16()` is true on the
+X4 and the CBZ reader shows 16 levels. Without a file the device stays on the
+4-level path. Other panels never report support (no Absolute mode).
+
+### The lab screen
+
+Settings > General > "16-level lab". It draws a test card through the two-pass
+path: 16 vertical bands (levels 0..15, labelled) in the upper part and a 4 x 4
+grid in the lower part (rows = coarse level, columns = fine class) so the
+size of the fine steps can be compared across coarse levels. Confirm reloads
+`fine.cfg` / `fine.lut` and redraws (a built-in default is used when no file
+exists, so the lab works on a fresh card); Left/Right switch between the full
+card and a coarse-only reference (pass 0 alone); Back exits and restores the
+boot state, so readers use 16 levels only when the file exists. The serial log
+(`INF`) prints the LUT source, the config values, each pass's duration and the
+free heap.
+
+Iteration loop: edit `fine.cfg` on a computer, upload it to
+`/.crosspoint/gray16/` through the web file manager (or move the card), open
+the lab, press Confirm, photograph the card. Aim for 16 bands that are
+monotonic and evenly spaced. If the three steps have different sizes depending
+on the coarse level (a physical property of the ink; pass 1 cannot tell the
+coarse levels apart), phase 3 adds a measured tone curve in the Gray16 writer
+so the dither targets the levels the panel actually produces.
+
 ## Costs and limits
 
 - Cache: 192 KB per page, never evicted while the book exists. A 200-page
@@ -200,8 +289,9 @@ Until phase 3 lands the device HAL returns `false` from `beginGray16()`.
 - Later views, 16-level: five 48 KB reads (four planes, then plane 3 again as
   the B/W baseline) plus two refreshes. 4-level fallback: two plane reads
   (planes 3 and 2), one B/W base refresh and one grayscale refresh.
-- Display time on the device is two absolute passes; expected ~1 s per page
-  once phase 3 lands (to be measured).
+- Display time on the device is two factory passes: 50 frames for the coarse
+  pass plus the fine pulses; expected about 1 s per page (to be measured in
+  the lab).
 - Images are scaled by the existing converters' nearest/linear scaling; no
   rotation of landscape pages onto a portrait screen (they are letterboxed).
 

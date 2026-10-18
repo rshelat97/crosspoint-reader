@@ -140,6 +140,12 @@ class HalDisplay {
   bool beginGray16();
   void displayGray16Pass(uint8_t pass, bool turnOffScreen = false);
   void endGray16(const uint8_t* bwBaseline);
+  // Fine-pass waveform for the 16-level pages: a 112-byte SSD1677 LUT in the
+  // controller's format (docs/comics-gray16.md, "Phase 2"). The bytes are
+  // copied. nullptr clears it; without a fine LUT supportsGray16() is false on
+  // the device and readers take the 4-level path.
+  static constexpr size_t GRAY16_LUT_SIZE = 112;
+  void setGray16FineLut(const uint8_t* lut112);
 
   // Runtime geometry passthrough
   uint16_t getDisplayWidth() const;
@@ -149,6 +155,8 @@ class HalDisplay {
 
  private:
   EInkDisplay einkDisplay;
+  uint8_t gray16FineLut[GRAY16_LUT_SIZE]{};
+  bool gray16FineLutSet = false;
 };
 
 extern HalDisplay display;
