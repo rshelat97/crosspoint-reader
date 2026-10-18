@@ -1,5 +1,6 @@
 #include "BookProgress.h"
 
+#include <Cbz.h>
 #include <Epub.h>
 #include <FsHelpers.h>
 #include <HalStorage.h>
@@ -52,6 +53,21 @@ int loadBookProgress(const std::string& path) {
     if (xtc->getPageCount() == 0) return -1;
     if (page >= xtc->getPageCount()) return 100;
     return xtc->calculateProgress(page);
+  }
+  if (FsHelpers::hasCbzExtension(path)) {
+    // One central-directory scan of the archive, like the XTC header read above.
+    auto cbz = makeUniqueNoThrow<Cbz>(path);
+    if (!cbz) {
+      LOG_ERR("HOME", "OOM: CBZ progress metadata");
+      return -1;
+    }
+    if (!cbz->load()) return -1;
+    HalFile file;
+    if (!Storage.openFileForRead("HOME", cbz->getCachePath() + "/progress.bin", file) || file.read(data, 4) != 4)
+      return -1;
+    const uint32_t page = readLe32(data);
+    if (page >= cbz->getPageCount()) return 100;
+    return cbz->calculateProgress(page);
   }
   return -1;
 }

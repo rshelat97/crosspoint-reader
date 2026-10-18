@@ -120,15 +120,23 @@ returns `false` from `beginGray16()`.
   `.png`, skipping directories, `__MACOSX/`, and names starting with `.`; the
   remaining names are sorted naturally (`2.jpg` before `10.jpg`), compared
   case-insensitively.
-- Cache: `/.crosspoint/cbz_<hash>/` with `pages/NNNN.g16`, `cover.bmp`
-  (2-bit, sleep screen), `thumb_<height>.bmp` (1-bit, home screen) and
-  `progress.bin` (current page), following the XTC reader's conventions.
+- Cache: `/.crosspoint/cbz_<hash>/` with `pages/NNNN.g16`, cover BMPs named
+  like the EPUB ones (`cover_legacy_v2.bmp`, `_crop`, `cover_original...`;
+  2-bit, sleep screen), `thumb_<height>.bmp` (1-bit, home screen) and
+  `progress.bin` (current page), following the XTC reader's conventions. A
+  page file is written as `NNNN.g16.tmp` and renamed into place, so a power
+  loss cannot leave a truncated page behind.
 - Title is the file name without extension; there is no author.
 - First view of a page decodes it (a "Loading" popup is shown) and caches the
-  planes; later views only stream the planes. Pages are scaled to fit the
-  logical page, preserving aspect ratio, centered, with white around them.
-- The status bar is drawn into every plane as a white box with black text so it
-  reads as pure black and white in the final image.
+  planes; later views only stream the planes. The decoder scales the image to
+  fit the logical page (aspect preserved, up or down); the result is placed
+  centred as decoded (clamped to the page, never re-scaled), with white around
+  it. The reader follows the orientation setting like the other readers; a
+  cached page whose orientation differs is regenerated.
+- The status bar follows the XTC status-bar setting (top/bottom/hidden) and is
+  drawn into every plane as a white box with black text so it reads as pure
+  black and white in the final image; the 4-level fallback clears its area
+  from the overlay masks.
 - Images that cannot be decoded (other formats, corrupt files) show a page
   error; the rest of the book stays readable.
 
@@ -149,5 +157,7 @@ returns `false` from `beginGray16()`.
   validation.
 - `test/cbz`: entry filtering and natural sort, page enumeration from a
   synthetic ZIP.
-- Simulator: open a fixture `.cbz`, check 16 distinct levels in the presented
-  frame and page turns; the 4-level fallback by forcing `supportsGray16()` off.
+- Simulator: open a fixture `.cbz` with a 16-step gradient page, check the
+  presented frame holds exactly the 16 luminances `g * 17`, letterboxing and
+  page turns (native and browser builds); the 4-level fallback by setting
+  `CROSSPOINT_SIM_NO_GRAY16=1`.

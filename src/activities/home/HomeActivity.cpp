@@ -1,6 +1,7 @@
 #include "HomeActivity.h"
 
 #include <Bitmap.h>
+#include <Cbz.h>
 #include <Epub.h>
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
@@ -116,6 +117,13 @@ void HomeActivity::resolveGridCoverPaths() {
         continue;
       }
       book.coverBmpPath = xtc->getThumbBmpPath();
+    } else if (FsHelpers::hasCbzExtension(book.path)) {
+      auto cbz = makeUniqueNoThrow<Cbz>(book.path);
+      if (!cbz) {
+        LOG_ERR("HOME", "OOM: CBZ thumbnail path");
+        continue;
+      }
+      book.coverBmpPath = cbz->getThumbBmpPath();
     }
   }
 }
@@ -154,6 +162,22 @@ void HomeActivity::loadGridCover(RecentBook& book, int height, bool& showingLoad
       GUI.fillPopupProgress(renderer, popupRect, 0);
     }
     if (xtc->load() && xtc->generateThumbBmp(height)) {
+      return;
+    }
+  } else if (FsHelpers::hasCbzExtension(book.path)) {
+    auto cbz = makeUniqueNoThrow<Cbz>(book.path);
+    if (!cbz) {
+      LOG_ERR("HOME", "OOM: cover CBZ");
+      return;
+    }
+    book.coverBmpPath = cbz->getThumbBmpPath();
+    if (Storage.exists(cbz->getThumbBmpPath(height).c_str())) return;
+    if (!showingLoading) {
+      showingLoading = true;
+      popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+      GUI.fillPopupProgress(renderer, popupRect, 0);
+    }
+    if (cbz->load() && cbz->generateThumbBmp(height)) {
       return;
     }
   }
@@ -209,6 +233,22 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
             }
             GUI.fillPopupProgress(renderer, popupRect, 10 + progress * (90 / recentBooks.size()));
             bool success = xtc.generateThumbBmp(thumbHeight);
+            if (!success) {
+              RECENT_BOOKS.updateBook(book.path, book.title, book.author, "");
+              book.coverBmpPath = "";
+            }
+            coverRendered = false;
+            requestUpdate();
+          }
+        } else if (FsHelpers::hasCbzExtension(book.path)) {
+          Cbz cbz(book.path);
+          if (cbz.load()) {
+            if (!showingLoading) {
+              showingLoading = true;
+              popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+            }
+            GUI.fillPopupProgress(renderer, popupRect, 10 + progress * (90 / recentBooks.size()));
+            const bool success = cbz.generateThumbBmp(thumbHeight);
             if (!success) {
               RECENT_BOOKS.updateBook(book.path, book.title, book.author, "");
               book.coverBmpPath = "";

@@ -13,6 +13,7 @@ std::string normalisePath(const std::string& path);
 
 // Numeric-aware, case-insensitive comparison ("2" < "10"). Returns true when str1 orders
 // before str2. Same ordering sortFileList applies within the file/directory groups.
+bool naturalLess(std::string_view str1, std::string_view str2);
 bool naturalLess(const std::string& str1, const std::string& str2);
 
 void sortFileList(std::vector<std::string>& strs);
@@ -56,6 +57,9 @@ inline bool hasEpubExtension(const String& fileName) {
 
 // Check for either .xtc or .xtch extension (case-insensitive)
 bool hasXtcExtension(std::string_view fileName);
+
+// Check for .cbz extension (case-insensitive)
+bool hasCbzExtension(std::string_view fileName);
 
 // Check for .txt extension (case-insensitive)
 bool hasTxtExtension(std::string_view fileName);

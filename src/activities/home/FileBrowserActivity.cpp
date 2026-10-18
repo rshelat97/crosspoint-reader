@@ -35,6 +35,8 @@ std::string getBookCachePath(const std::string& path) {
     prefix = "epub_";
   } else if (FsHelpers::hasXtcExtension(path)) {
     prefix = "xtc_";
+  } else if (FsHelpers::hasCbzExtension(path)) {
+    prefix = "cbz_";
   } else {
     return "";
   }
@@ -132,7 +134,7 @@ void FileBrowserActivity::loadFiles() {
           files.emplace_back(filename);
         }
       } else if (FsHelpers::hasReflowableBookExtension(filename) || FsHelpers::hasXtcExtension(filename) ||
-                 FsHelpers::hasImageExtension(filename)) {
+                 FsHelpers::hasCbzExtension(filename) || FsHelpers::hasImageExtension(filename)) {
         files.emplace_back(filename);
       }
     }

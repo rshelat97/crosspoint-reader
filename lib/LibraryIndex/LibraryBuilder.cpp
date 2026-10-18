@@ -1051,7 +1051,8 @@ bool isLibraryBookFile(const std::string_view path) {
     start = slash + 1;
   }
   return FsHelpers::checkFileExtension(path, ".epub") || FsHelpers::checkFileExtension(path, ".txt") ||
-         FsHelpers::checkFileExtension(path, ".md") || FsHelpers::checkFileExtension(path, ".xtc");
+         FsHelpers::checkFileExtension(path, ".md") || FsHelpers::checkFileExtension(path, ".xtc") ||
+         FsHelpers::checkFileExtension(path, ".cbz");
 }
 
 bool markLibraryIndexDirty() {
