@@ -160,10 +160,12 @@ bool CbzReaderActivity::renderGray16(uint8_t* framebuffer) {
   for (uint8_t pass = 0; pass < 2 && ok; pass++) {
     const uint8_t low = pass == 0 ? 2 : 0;
     ok = loadPlaneWithStatusBar(low, framebuffer);
-    if (ok) renderer.copyGrayscaleLsbBuffers();
-    if (ok) ok = loadPlaneWithStatusBar(low + 1, framebuffer);
-    if (ok) renderer.copyGrayscaleMsbBuffers();
-    if (ok) display.displayGray16Pass(pass);
+    if (!ok) break;
+    renderer.copyGrayscaleLsbBuffers();
+    ok = loadPlaneWithStatusBar(low + 1, framebuffer);
+    if (!ok) break;
+    renderer.copyGrayscaleMsbBuffers();
+    display.displayGray16Pass(pass);
   }
   // Leave the framebuffer holding the B/W approximation (plane 3): it is the
   // controller's differential baseline for the next ordinary refresh.
