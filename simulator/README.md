@@ -90,9 +90,9 @@ simulator/
 ├── sim/               # simulator core: framebuffer→RGBA presenter, input
 │                      #   event queue with firmware-accurate edge semantics,
 │                      #   entry point (native driver / Emscripten exports)
-├── stubs/             # network activities render a "not available" notice;
-│                      #   HTTP/OTA/KOReader clients return error codes;
-│                      #   JPEGDEC/PNGdec/QRCode/ArduinoJson fallbacks
+├── stubs/             # Calibre wireless notice; OTA/flash report failure;
+│                      #   wolfCrypt edge (real SHA-1/256, no ciphers);
+│                      #   inert frontlight; JPEGDEC/PNGdec/QRCode fallbacks
 └── web/               # static frontend (canvas blit, buttons, drag & drop)
 ```
 
@@ -106,8 +106,8 @@ Key design points:
   the render loop is driven synchronously, so no pthreads (and no special
   browser headers) are needed. Semaphores are depth counters.
 - **Display semantics match the panel**: 1-bpp frames present as B/W; 2-bpp
-  grayscale planes composite over the previously displayed frame exactly like
-  the real waveforms (value 0 = untouched, 1–3 darken).
+  grayscale overlay planes composite over the B/W base like the SSD1677
+  waveforms (value 0 = untouched, 1–2 light gray, 3 dark gray).
 - **Input contract mirrors `InputManager`**: frame-scoped pressed/released
   edges, tap slop, swipe thresholds and hold timing are recomputed per
   `update()` just like the freeink SDK, and touch coordinates are fed
@@ -120,8 +120,11 @@ Key design points:
 
 - Real network access: the Wi-Fi radio is faked (fake scan results, instant
   joins), which is enough for the REAL Wi-Fi selection and File Transfer
-  activities plus the web server to run. True network clients — OPDS
-  browsing, Calibre wireless, KOReader sync, OTA download — show a notice and
-  back out or return error codes.
+  activities plus the web server to run. Network clients (OPDS, KOReader
+  sync, HTTP downloads) are the real code; with no network SecureNet's
+  connect fails and they take their offline error paths. Calibre wireless
+  shows a notice.
+- TLS, DRM-protected (LCP) books and BLE page turners: crypto ciphers report
+  failure and BLE uses the SDK's no-radio backend.
 - OTA flashing, battery drain (fixed 87%), USB, and the tilt sensor.
 - E-ink refresh artifacts: a FULL refresh is visualised with a brief flash.

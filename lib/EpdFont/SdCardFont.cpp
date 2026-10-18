@@ -98,9 +98,28 @@ bool ensureArrayCapacity(T*& buf, CapT& capacity, const uint32_t needed) {
   return buf != nullptr;
 }
 
+// Codepoint scratch for buildAdvanceTablePacked, shared by all live
+// instances (layout and render run on the single UI task, never
+// concurrently). Allocated on first use and freed with the last instance, so
+// the 16 KB is resident only while an SD font is loaded instead of being
+// allocated and freed on every measured paragraph during indexing — that
+// churn fragments the heap and, once the largest free block dips below 16 KB,
+// fails on every page from then on (upstream #2293).
+constexpr uint32_t MAX_UNIQUE_CODEPOINTS = 4096;
+uint32_t* codepointScratch = nullptr;
+uint32_t liveFontCount = 0;
+
 }  // namespace
 
-SdCardFont::~SdCardFont() { freeAll(); }
+SdCardFont::SdCardFont() { ++liveFontCount; }
+
+SdCardFont::~SdCardFont() {
+  freeAll();
+  if (--liveFontCount == 0) {
+    delete[] codepointScratch;
+    codepointScratch = nullptr;
+  }
+}
 
 // --- Per-style free/cleanup ---
 
@@ -1659,21 +1678,14 @@ int SdCardFont::buildAdvanceTablePacked(const char* const* segments, const size_
   }
 
   // +2 reserved slots for space and hyphen injected after the main scan.
-  // Allocated once and reused: this runs per measured paragraph during
-  // indexing, and a 16 KB alloc/free on every call both fragments the heap
-  // and, once the largest free block dips below 16 KB, fails on every page
-  // from then on (upstream #2293). One resident block costs 16 KB only after
-  // an SD font is first laid out, and is shared by all SdCardFont instances
-  // (layout and render run on the single UI task, never concurrently).
-  static constexpr uint32_t MAX_UNIQUE_CODEPOINTS = 4096;
-  static uint32_t* codepoints = nullptr;
-  if (!codepoints) {
-    codepoints = new (std::nothrow) uint32_t[MAX_UNIQUE_CODEPOINTS + 2];
-    if (!codepoints) {
+  if (!codepointScratch) {
+    codepointScratch = new (std::nothrow) uint32_t[MAX_UNIQUE_CODEPOINTS + 2];
+    if (!codepointScratch) {
       LOG_ERR("SDCF", "buildAdvanceTable: failed to allocate codepoint buffer (%u bytes)", MAX_UNIQUE_CODEPOINTS * 4);
       return -1;
     }
   }
+  uint32_t* const codepoints = codepointScratch;
   uint32_t cpCount = 0;
   bool hitCap = false;
 

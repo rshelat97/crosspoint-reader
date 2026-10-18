@@ -12,7 +12,10 @@ int lastMode = 0;
 
 // Framebuffer convention (see GfxRenderer): 1 bit per pixel, MSB-first within
 // each byte, bit set = white.
+bool inverted = false;  // panel-level dark mode (HalDisplay::setInverted)
+
 inline void writePixel(int x, int y, uint8_t lum) {
+  if (inverted) lum = static_cast<uint8_t>(0xFF - lum);
   uint8_t* p = &rgbaBuf[(static_cast<size_t>(y) * PANEL_W + x) * 4];
   p[0] = lum;
   p[1] = lum;
@@ -39,9 +42,11 @@ void presentBW(const uint8_t* bw, int refreshMode) {
 
 void presentGray(const uint8_t* lsb, const uint8_t* msb) {
   // The panel composites the two gray planes over the previously displayed
-  // base frame: plane bits are ink coverage (set = darker), and value 0
-  // leaves the base pixel untouched. Values 1..3 darken toward black.
-  static constexpr uint8_t LEVELS[4] = {0xFF /*unused*/, 0xAA, 0x55, 0x00};
+  // base frame (Overlay grayscale). Mask encoding, per the SDK's
+  // GrayscaleCapabilities and GlyphBitmap: (MSB,LSB) 00 = untouched base
+  // pixel (black and white both live in the B/W base), 10 = light gray,
+  // 11 = dark gray. 01 is never produced; it is shown as light gray.
+  static constexpr uint8_t LEVELS[4] = {0xFF /*transparent*/, 0xAA, 0xAA, 0x55};
   for (int y = 0; y < PANEL_H; y++) {
     const size_t rowOff = static_cast<size_t>(y) * PANEL_STRIDE;
     for (int xb = 0; xb < PANEL_STRIDE; xb++) {
@@ -57,6 +62,9 @@ void presentGray(const uint8_t* lsb, const uint8_t* msb) {
   frames++;
   lastMode = 1;
 }
+
+void setInverted(bool on) { inverted = on; }
+bool isInverted() { return inverted; }
 
 const uint8_t* rgba() { return rgbaBuf; }
 uint32_t frameCounter() { return frames; }

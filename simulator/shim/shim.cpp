@@ -135,3 +135,16 @@ extern "C" uint32_t uzlib_adler32(const void* data, unsigned int length, uint32_
   }
   return (s2 << 16) | s1;
 }
+
+#ifdef __EMSCRIPTEN__
+#include <sys/time.h>
+
+#include <cerrno>
+// Older Emscripten libcs lack settimeofday (TrustedTime restores its clock
+// floor with it). A browser tab cannot set the system clock, so report EPERM
+// like an unprivileged host process. Weak: a libc that has it wins.
+extern "C" __attribute__((weak)) int settimeofday(const struct timeval*, const struct timezone*) {
+  errno = EPERM;
+  return -1;
+}
+#endif

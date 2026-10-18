@@ -50,6 +50,18 @@ class String {
     const auto p = s_.find(sub, static_cast<size_t>(fromIndex));
     return p == std::string::npos ? -1 : static_cast<int>(p);
   }
+  unsigned char reserve(unsigned int size) {
+    s_.reserve(size);
+    return 1;
+  }
+  void remove(unsigned int index) {
+    if (index < s_.size()) s_.erase(index);
+  }
+  void remove(unsigned int index, unsigned int count) {
+    if (index < s_.size()) s_.erase(index, count);
+  }
+  const char* begin() const { return s_.data(); }
+  const char* end() const { return s_.data() + s_.size(); }
   long toInt() const { return strtol(s_.c_str(), nullptr, 10); }
   double toDouble() const { return strtod(s_.c_str(), nullptr); }
   bool equals(const String& rhs) const { return s_ == rhs.s_; }

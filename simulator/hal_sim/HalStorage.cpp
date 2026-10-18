@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <string>
 
 HalStorage HalStorage::instance;
@@ -265,6 +266,7 @@ HalFile HalStorage::open(const char* path, const oflag_t oflag) {
     const bool exists = stat(impl->hostPath.c_str(), &st) == 0;
     if (mustExist && !exists) return HalFile(std::move(impl));
     impl->f = fopen(impl->hostPath.c_str(), truncate || !exists ? "w+b" : "r+b");
+    if (impl->f && (oflag & (O_AT_END | O_APPEND)) != 0) fseek(impl->f, 0, SEEK_END);
     impl->writable = impl->f != nullptr;
   } else {
     impl->f = fopen(impl->hostPath.c_str(), "rb");
@@ -322,3 +324,54 @@ bool HalStorage::openFileForWrite(const char* moduleName, const std::string& pat
 bool HalStorage::openFileForWrite(const char* moduleName, const String& path, HalFile& file) {
   return openFileForWrite(moduleName, path.c_str(), file);
 }
+
+// --- newer HalFile / HalStorage API ------------------------------------------
+
+size_t HalFile::write(const uint8_t* buf, size_t count) { return write(static_cast<const void*>(buf), count); }
+
+bool HalFile::truncate(uint64_t length) {
+  if (!impl || !impl->f || !impl->writable) return false;
+  fflush(impl->f);
+  return ftruncate(fileno(impl->f), static_cast<off_t>(length)) == 0;
+}
+
+// FAT packed date/time (date << 16 | time), as SdFat's getModifyDateTime
+// reports it; 0 when unknown.
+uint32_t HalFile::modificationTime() {
+  if (!impl) return 0;
+  struct stat st{};
+  if (stat(impl->hostPath.c_str(), &st) != 0) return 0;
+  struct tm t{};
+  localtime_r(&st.st_mtime, &t);
+  if (t.tm_year < 80) return 0;  // FAT dates start in 1980
+  const uint32_t date = (static_cast<uint32_t>(t.tm_year - 80) << 9) | (static_cast<uint32_t>(t.tm_mon + 1) << 5) |
+                        static_cast<uint32_t>(t.tm_mday);
+  const uint32_t time = (static_cast<uint32_t>(t.tm_hour) << 11) | (static_cast<uint32_t>(t.tm_min) << 5) |
+                        static_cast<uint32_t>(t.tm_sec / 2);
+  return (date << 16) | time;
+}
+
+bool HalStorage::readFileToString(const char* moduleName, const std::string& path, size_t cap, std::string& out) {
+  out.clear();
+  HalFile file;
+  if (!openFileForRead(moduleName, path, file)) return false;
+  const size_t size = file.fileSize();
+  if (size == 0 || size > cap) return false;
+  out.resize(size);
+  return file.read(out.data(), size) == static_cast<int>(size);
+}
+
+bool HalStorage::replaceFile(const char* tmpPath, const char* path) {
+  // rename(2) atomically replaces an existing destination, like SdFat's
+  // remove-then-rename sequence on device.
+  return ::rename(mapPath(tmpPath).c_str(), mapPath(path).c_str()) == 0;
+}
+
+void HalStorage::prepareForDeepSleep() {}
+
+// USB mass storage (X4 Pro / Paper Mono): the X4 has no USB-OTG drive mode.
+bool HalStorage::beginUsbDrive() { return false; }
+bool HalStorage::disconnectUsbDriveHost() { return false; }
+void HalStorage::endUsbDrive() {}
+UsbDriveState HalStorage::usbDriveState() const { return UsbDriveState::Unsupported; }
+bool HalStorage::usbDriveHostSuspended() const { return false; }

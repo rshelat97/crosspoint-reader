@@ -83,6 +83,25 @@ void HalDisplay::returnFrameBufferStorage() {
   memset(einkDisplay.frameBuffer(), 0xFF, BUFFER_SIZE);
 }
 
+HalDisplay::Controller HalDisplay::getController() const { return BoardConfig::ACTIVE.displayController; }
+
+// What the X4's SSD1677 driver reports for Overlay grayscale (B/W base, then
+// light/dark masks composited over it) — minus strip uploads and async base,
+// which the simulator does not model. Absolute/Direct are unsupported on X4.
+HalDisplay::GrayscaleCapabilities HalDisplay::grayscaleCapabilities(GrayscaleMode mode) const {
+  if (mode != GrayscaleMode::Overlay) return {};
+  return {freeink::GrayscaleEncoding::OverlayMasks, freeink::GrayscaleBase::Separate, false, false, false};
+}
+
+bool HalDisplay::displayGrayscaleBase(GrayscaleMode mode, RefreshMode fallback, bool turnOffScreen) {
+  if (!grayscaleCapabilities(mode).supported()) return false;
+  displayGrayscaleBase(fallback, turnOffScreen);
+  return true;
+}
+
+void HalDisplay::setInverted(bool inverted) { simdisp::setInverted(inverted); }
+bool HalDisplay::isInverted() const { return simdisp::isInverted(); }
+
 void HalDisplay::preconditionGrayscale() {}
 void HalDisplay::preconditionGrayscale(uint16_t, uint16_t, uint16_t, uint16_t) {}
 
@@ -111,3 +130,7 @@ uint16_t HalDisplay::getDisplayWidth() const { return DISPLAY_WIDTH; }
 uint16_t HalDisplay::getDisplayHeight() const { return DISPLAY_HEIGHT; }
 uint16_t HalDisplay::getDisplayWidthBytes() const { return DISPLAY_WIDTH_BYTES; }
 uint32_t HalDisplay::getBufferSize() const { return BUFFER_SIZE; }
+bool HalDisplay::toggleInverted() {
+  simdisp::setInverted(!simdisp::isInverted());
+  return simdisp::isInverted();
+}

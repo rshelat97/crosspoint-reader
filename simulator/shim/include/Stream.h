@@ -8,4 +8,9 @@ class Stream : public Print {
   virtual int available() { return 0; }
   virtual int read() { return -1; }
   virtual int peek() { return -1; }
+  void setTimeout(unsigned long ms) { timeoutMs_ = ms; }
+  unsigned long getTimeout() const { return timeoutMs_; }
+
+ protected:
+  unsigned long timeoutMs_ = 1000;
 };

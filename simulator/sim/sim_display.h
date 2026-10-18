@@ -17,6 +17,10 @@ void presentBW(const uint8_t* bw, int refreshMode);
 // Present a 2-bit grayscale frame from LSB+MSB planes (0=black .. 3=white).
 void presentGray(const uint8_t* lsb, const uint8_t* msb);
 
+// Panel-level inversion (dark mode): applies to subsequent presents.
+void setInverted(bool on);
+bool isInverted();
+
 // Frontend side.
 const uint8_t* rgba();           // PANEL_W*PANEL_H*4, updated on each present
 uint32_t frameCounter();         // increments on each present

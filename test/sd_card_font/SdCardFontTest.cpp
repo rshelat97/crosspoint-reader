@@ -457,10 +457,16 @@ TEST(SdCardFontTest, AdvanceMergesPastTheCapKeepTheLowestCodepoints) {
 
 TEST(SdCardFontTest, AnEmptyOrFailedAdvanceBuildLeavesNoTable) {
   makeFont();
+  {
+    SdCardFont font;
+    ASSERT_TRUE(font.load("fixture"));
+    font.buildAdvanceTable("", 1);
+    EXPECT_FALSE(font.hasAdvanceTable());
+  }
+  // The codepoint scratch is shared and stays resident while any font lives,
+  // so inject its failure on a fresh instance's first build.
   SdCardFont font;
   ASSERT_TRUE(font.load("fixture"));
-  font.buildAdvanceTable("", 1);
-  EXPECT_FALSE(font.hasAdvanceTable());
   failNextArraySize = (4096 + 2) * sizeof(uint32_t);  // the codepoint scratch
   EXPECT_EQ(-1, font.buildAdvanceTable(page(FIRST, 10).c_str(), 1));
   EXPECT_FALSE(font.hasAdvanceTable());

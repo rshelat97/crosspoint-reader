@@ -54,6 +54,8 @@ long random(long howbig);
 #ifndef INPUT
 #define INPUT 0x01
 #define OUTPUT 0x03
+#define INPUT_PULLUP 0x05
+#define INPUT_PULLDOWN 0x09
 #define HIGH 0x1
 #define LOW 0x0
 #endif
@@ -82,6 +84,10 @@ class EspClass {
   uint32_t getHeapSize();
   uint32_t getMinFreeHeap();
   uint32_t getMaxAllocHeap();
+  // Chip identity as an X4 (ESP32-C3, 16 MB flash) reports it.
+  const char* getChipModel() { return "ESP32-C3"; }
+  uint8_t getChipRevision() { return 4; }
+  uint32_t getFlashChipSize() { return 16u * 1024u * 1024u; }
   [[noreturn]] void restart();
 };
 extern EspClass ESP;
@@ -99,6 +105,8 @@ class IPAddress {
     snprintf(buf, sizeof(buf), "%u.%u.%u.%u", a_, b_, c_, d_);
     return String(buf);
   }
+  bool operator==(const IPAddress& o) const { return a_ == o.a_ && b_ == o.b_ && c_ == o.c_ && d_ == o.d_; }
+  bool operator!=(const IPAddress& o) const { return !(*this == o); }
   uint8_t operator[](int i) const {
     switch (i) {
       case 0:
@@ -115,3 +123,10 @@ class IPAddress {
  private:
   uint8_t a_ = 0, b_ = 0, c_ = 0, d_ = 0;
 };
+
+// Real Arduino.h exposes Serial, FreeRTOS and <sys/time.h>; firmware and SDK
+// modules (OpdsLog.h, TrustedTime) rely on that transitively.
+#include <sys/time.h>
+
+#include "HardwareSerial.h"
+#include "freertos/FreeRTOS.h"

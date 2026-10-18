@@ -36,5 +36,9 @@ bool isTouchHeldAt(float& nx, float& ny);
 unsigned long lastTouchHeldMs();
 bool wasSwipe(float& nxS, float& nyS, float& nxE, float& nyE);
 bool wasTouchActivity();
+bool wasTouchReleased();
+bool wasTouchLongPress(float& nx, float& ny);
+void suppressTouchContact();
+bool anyInputActive();
 
 }  // namespace siminput

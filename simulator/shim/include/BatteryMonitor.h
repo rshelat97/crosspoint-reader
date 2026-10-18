@@ -9,4 +9,8 @@ class BatteryMonitor {
     out = 87;
     return true;
   }
+  bool isCharging() const { return false; }
+  // Fuel-gauge calibration (X3 only); nothing to load in the simulator.
+  static bool loadDesignCapacity() { return false; }
+  static bool enterShipMode() { return false; }
 };

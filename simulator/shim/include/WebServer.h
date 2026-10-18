@@ -135,6 +135,19 @@ class WebServer {
   // The server most recently begin()'d and not yet stop()'d (for the bridge).
   static WebServer* activeInstance();
 
+ protected:
+  // arduino-esp32's parsed-argument storage. CrossPointWebServer subclasses
+  // WebServer to free these early; this shim keeps args in argList_ (cleared
+  // per request), so they stay empty and the release is a no-op.
+  struct RequestArgument {
+    String key;
+    String value;
+  };
+  RequestArgument* _currentArgs = nullptr;
+  int _currentArgCount = 0;
+  RequestArgument* _postArgs = nullptr;
+  int _postArgsLen = 0;
+
  private:
   struct Route {
     std::string uri;

@@ -14,6 +14,7 @@ constexpr float PANEL_H = 480.0f;
 constexpr float TAP_SLOP_PX = 28.0f;
 constexpr float SWIPE_MIN_PX = 60.0f;
 constexpr unsigned long SWIPE_MAX_MS = 700;
+constexpr unsigned long TOUCH_LONG_PRESS_MS = 500;
 
 struct TouchPoint {
   float nx = 0, ny = 0;
@@ -41,7 +42,11 @@ bool touchContact = false;  // live level between frames
 bool touchPressed = false;  // frame-committed level
 bool touchPressedEvent = false;
 bool touchReleasedEvent = false;
-bool movedBeyondSlop = false;
+bool movedBeyondSlop = false;         // 28 px stationary slop (holds, long-press)
+bool movedBeyondReleaseSlop = false;  // 60 px: a released tap stays a tap until this
+bool touchSuppressed = false;         // suppressTouchContact(): ignore rest of contact
+bool longPressFired = false;          // one long-press per contact
+bool touchLongPressEvent = false;
 TouchPoint touchDownPoint;
 TouchPoint touchLivePoint;
 unsigned long lastTouchHeldDurationMs = 0;
@@ -63,8 +68,11 @@ void injectTouchUp(float nx, float ny) { pendingEvents.push_back({PendingEvent::
 void update() {
   const unsigned long now = millis();
   const uint8_t prevState = currentState;
+  // The suppression latch self-clears once the previous contact is fully over.
+  if (!touchContact && !touchReleasedEvent) touchSuppressed = false;
   touchPressedEvent = false;
   touchReleasedEvent = false;
+  touchLongPressEvent = false;
 
   for (const auto& ev : pendingEvents) {
     switch (ev.type) {
@@ -80,6 +88,9 @@ void update() {
         touchDownPoint = {ev.nx, ev.ny, now};
         touchLivePoint = touchDownPoint;
         movedBeyondSlop = false;
+        movedBeyondReleaseSlop = false;
+        longPressFired = false;
+        touchSuppressed = false;
         break;
       case PendingEvent::TouchMove:
         if (touchContact) {
@@ -87,6 +98,7 @@ void update() {
           const float dx = nativeDeltaPx(touchDownPoint, touchLivePoint, true);
           const float dy = nativeDeltaPx(touchDownPoint, touchLivePoint, false);
           if (std::fabs(dx) > TAP_SLOP_PX || std::fabs(dy) > TAP_SLOP_PX) movedBeyondSlop = true;
+          if (std::fabs(dx) >= SWIPE_MIN_PX || std::fabs(dy) >= SWIPE_MIN_PX) movedBeyondReleaseSlop = true;
         }
         break;
       case PendingEvent::TouchUp:
@@ -102,6 +114,13 @@ void update() {
   pendingEvents.clear();
 
   touchPressed = touchContact || touchReleasedEvent;
+
+  // Long-press: fires once, while still down, for a stationary contact.
+  if (touchContact && !movedBeyondSlop && !longPressFired && !touchSuppressed &&
+      now - touchDownPoint.timestamp >= TOUCH_LONG_PRESS_MS) {
+    touchLongPressEvent = true;
+    longPressFired = true;
+  }
 
   // Edge masks, exactly InputManager::applyStateChange semantics.
   pressedEvents = static_cast<uint8_t>(currentState & ~prevState);
@@ -133,7 +152,7 @@ unsigned long powerHeldTimeMs() {
 bool hasTouchHardware() { return true; }
 
 bool wasTouchTap(float& nx, float& ny) {
-  if (!(touchReleasedEvent && !movedBeyondSlop)) return false;
+  if (!touchReleasedEvent || touchSuppressed || movedBeyondReleaseSlop) return false;
   nx = touchDownPoint.nx;  // deliberate: tap reports the touch-DOWN point
   ny = touchDownPoint.ny;
   return true;
@@ -145,14 +164,14 @@ bool wasTouchDownEvent(float& nx, float& ny) {
   return true;
 }
 bool isTouchTapCandidate(float& nx, float& ny, unsigned long& heldMs) {
-  if (!(touchContact && !movedBeyondSlop)) return false;
+  if (!touchContact || movedBeyondSlop || touchSuppressed) return false;
   nx = touchDownPoint.nx;
   ny = touchDownPoint.ny;
   heldMs = millis() - touchDownPoint.timestamp;
   return true;
 }
 bool isTouchHeldAt(float& nx, float& ny) {
-  if (!touchContact) return false;
+  if (!touchContact || touchSuppressed) return false;
   nx = touchLivePoint.nx;  // live finger position, no slop gate
   ny = touchLivePoint.ny;
   return true;
@@ -160,7 +179,7 @@ bool isTouchHeldAt(float& nx, float& ny) {
 unsigned long lastTouchHeldMs() { return lastTouchHeldDurationMs; }
 
 bool wasSwipe(float& nxS, float& nyS, float& nxE, float& nyE) {
-  if (!touchReleasedEvent) return false;
+  if (!touchReleasedEvent || touchSuppressed) return false;
   if (lastTouchHeldDurationMs > SWIPE_MAX_MS) return false;
   const float dx = nativeDeltaPx(touchDownPoint, touchLivePoint, true);
   const float dy = nativeDeltaPx(touchDownPoint, touchLivePoint, false);
@@ -172,5 +191,17 @@ bool wasSwipe(float& nxS, float& nyS, float& nxE, float& nyE) {
   return true;
 }
 bool wasTouchActivity() { return touchPressedEvent || touchReleasedEvent; }
+
+bool wasTouchReleased() { return touchReleasedEvent && !touchSuppressed; }
+bool wasTouchLongPress(float& nx, float& ny) {
+  if (!touchLongPressEvent) return false;
+  nx = touchDownPoint.nx;  // like taps, a long-press routes to the touch-down point
+  ny = touchDownPoint.ny;
+  return true;
+}
+void suppressTouchContact() {
+  if (touchContact || touchReleasedEvent) touchSuppressed = true;
+}
+bool anyInputActive() { return currentState != 0 || touchContact; }
 
 }  // namespace siminput
